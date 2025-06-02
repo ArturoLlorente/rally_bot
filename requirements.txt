@@ -1,0 +1,7 @@
+python-telegram-bot
+folium
+tqdm
+logging
+geopy
+branca
+python-dotenv

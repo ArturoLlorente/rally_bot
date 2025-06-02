@@ -1,0 +1,116 @@
+[
+    {
+        "origin": "Barcelona",
+        "origin_address": "Carrer d´Andorra 65, Local 2, 08840 Viladecans",
+        "returns": [
+            {
+                "destination": "Frankfurt",
+                "destination_address": "Ferdinand-Porsche Straße 9, 60386 Frankfurt",
+                "available_dates": [
+                    {
+                        "startDate": "26/05/2025",
+                        "endDate": "02/06/2025"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "origin": "Bordeaux",
+        "origin_address": "138 Avenue de l‘Argonne, 33700\t Mérignac",
+        "returns": [
+            {
+                "destination": "Bielefeld",
+                "destination_address": "Heidsieker Heide 53, 33739\t Bielefeld-Theesen",
+                "available_dates": [
+                    {
+                        "startDate": "07/06/2025",
+                        "endDate": "14/06/2025"
+                    }
+                ]
+            },
+            {
+                "destination": "Trier",
+                "destination_address": "Am Maarbach 7-9, 54329\tKonz",
+                "available_dates": [
+                    {
+                        "startDate": "10/06/2025",
+                        "endDate": "17/06/2025"
+                    },
+                    {
+                        "startDate": "06/06/2025",
+                        "endDate": "13/06/2025"
+                    }
+                ]
+            },
+            {
+                "destination": "Mainz",
+                "destination_address": "Hochheimer Str. 89, 55246 Wiesbaden",
+                "available_dates": [
+                    {
+                        "startDate": "10/06/2025",
+                        "endDate": "17/06/2025"
+                    }
+                ]
+            },
+            {
+                "destination": "Cologne-Bonn",
+                "destination_address": "Klosengartenstr. 39",
+                "available_dates": [
+                    {
+                        "startDate": "06/06/2025",
+                        "endDate": "13/06/2025"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "origin": "Bremen",
+        "origin_address": "Westerfeld 19",
+        "returns": [
+            {
+                "destination": "Madrid",
+                "destination_address": "Calle Mir, 10",
+                "available_dates": [
+                    {
+                        "startDate": "16/06/2025",
+                        "endDate": "23/06/2025"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "origin": "Lyon",
+        "origin_address": "1201 Avenue des Pré Seigneurs, 01120 Dagneux",
+        "returns": [
+            {
+                "destination": "Cologne-Bonn",
+                "destination_address": "Klosengartenstr. 39",
+                "available_dates": [
+                    {
+                        "startDate": "09/06/2025",
+                        "endDate": "16/06/2025"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "origin": "Malaga",
+        "origin_address": "Calle José Calderón, 120",
+        "returns": [
+            {
+                "destination": "Leipzig",
+                "destination_address": "Kamenzer Str. 13, 04347 Leipzig",
+                "available_dates": [
+                    {
+                        "startDate": "07/06/2025",
+                        "endDate": "14/06/2025"
+                    }
+                ]
+            }
+        ]
+    }
+]
