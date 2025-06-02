@@ -192,10 +192,10 @@ class RoadsurferBot:
             # Check for new routes for favorites
             #
             
-            self.stations_with_returns = new_stations
+            
             self.logger.info("Processing routes for stations...")
             output_data = print_routes_for_stations(new_stations)
-            
+            self.stations_with_returns = output_data
             await self._check_new_routes(output_data, context)
             
             self.logger.info("Saving output to JSON...")
@@ -220,7 +220,6 @@ class RoadsurferBot:
 
     async def _check_new_routes(self, new_stations: List[Dict], context: ContextTypes.DEFAULT_TYPE) -> None:
         """Check for new routes matching users' favorite stations"""
-        print(new_stations)
         for user_id, favorite_stations in self.user_favorites.items():
             for station in new_stations:
                 if station['origin'] in favorite_stations:
@@ -386,6 +385,10 @@ class RoadsurferBot:
         message = update.message or update.callback_query.message
         
         try:
+            # First run the GUI function to generate/update the HTML file
+            await message.reply_text("🔄 Generando mapa interactivo...")
+            gui()
+            
             with open("rutas_interactivas.html", "rb") as f:
                 await message.reply_document(
                     document=InputFile(f, filename="rutas_interactivas.html"),
