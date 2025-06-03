@@ -209,3 +209,36 @@ Created by @arlloren
 ## Acknowledgments
 
 - [python-telegram-bot](https://python-telegram-bot.org/) for the Telegram bot framework
+
+## Deployment
+
+### Local Development
+For local development, the bot will run in polling mode:
+```bash
+python run_bot.py
+```
+
+### Deployment on Render.com
+
+1. Create a new Web Service on Render
+2. Connect your GitHub repository
+3. Configure the following settings:
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `python run_bot.py`
+
+4. Add the following environment variables:
+   ```
+   BOT_TOKEN=your_telegram_bot_token
+   PORT=8443  # or any port Render assigns
+   WEBHOOK_URL=https://your-app-name.onrender.com/webhook
+   WEBHOOK_SECRET=your-secret-token  # optional but recommended
+   ```
+
+The bot will automatically detect when it's running on Render and switch to webhook mode with the appropriate port.
+
+### Environment Variables
+
+- `BOT_TOKEN`: Your Telegram Bot token from BotFather
+- `PORT`: Port number for the webhook server (default: 8443)
+- `WEBHOOK_URL`: Full URL for the webhook endpoint
+- `WEBHOOK_SECRET`: Secret token for webhook security (optional)

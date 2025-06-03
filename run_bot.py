@@ -8,6 +8,7 @@ from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import sys
 
 from api_utils import get_stations_data
 from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -567,7 +568,30 @@ class RoadsurferBot:
     def run(self) -> None:
         """Run the bot"""
         self.logger.info("Starting bot...")
-        self.application.run_polling()
+        
+        # Get environment variables
+        PORT = int(os.getenv('PORT', '8443'))
+        WEBHOOK_URL = os.getenv('WEBHOOK_URL')
+        
+        if not WEBHOOK_URL and 'RENDER' in os.environ:
+            # If running on Render.com and WEBHOOK_URL not set, construct it
+            service_url = os.getenv('RENDER_EXTERNAL_URL')
+            if service_url:
+                WEBHOOK_URL = f"{service_url}/webhook"
+        
+        if WEBHOOK_URL:
+            # Running in production with webhooks
+            self.logger.info(f"Starting bot in webhook mode on port {PORT}")
+            self.application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                webhook_url=WEBHOOK_URL,
+                secret_token=os.getenv('WEBHOOK_SECRET', 'your-secret-token')
+            )
+        else:
+            # Running in development with polling
+            self.logger.info("Starting bot in polling mode")
+            self.application.run_polling()
 
 
 if __name__ == "__main__":
