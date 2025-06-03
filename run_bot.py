@@ -9,6 +9,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 import sys
+from flask import Flask, Response
 
 from api_utils import get_stations_data
 from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -16,6 +17,17 @@ from gui import gui
 
 # Load environment variables
 load_dotenv()
+
+# Initialize Flask app for health checks
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    return Response("Bot is running!", status=200)
+
+@flask_app.route('/webhook', methods=['POST'])
+def webhook():
+    return Response("Webhook endpoint!", status=200)
 
 def create_progress_bar(progress: int, total: int = 100, length: int = 20) -> str:
     """Create a pretty progress bar with percentage"""
@@ -35,7 +47,7 @@ class RoadsurferBot:
         # Initialize logging
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.StreamHandler(),
                 logging.FileHandler('bot.log')
@@ -570,7 +582,7 @@ class RoadsurferBot:
         self.logger.info("Starting bot...")
         
         # Get environment variables
-        PORT = int(os.getenv('PORT', '8443'))
+        PORT = int(os.getenv('PORT', '10000'))
         WEBHOOK_URL = os.getenv('WEBHOOK_URL')
         
         if not WEBHOOK_URL and 'RENDER' in os.environ:
@@ -582,21 +594,41 @@ class RoadsurferBot:
         if WEBHOOK_URL:
             # Running in production with webhooks
             self.logger.info(f"Starting bot in webhook mode on port {PORT}")
+            self.logger.info(f"Setting webhook URL to: {WEBHOOK_URL}")
+            
+            # Start Flask app in a separate thread for health checks
+            from threading import Thread
+            flask_thread = Thread(target=lambda: flask_app.run(host='0.0.0.0', port=PORT))
+            flask_thread.daemon = True
+            flask_thread.start()
+            
+            # Configure the webhook
             self.application.run_webhook(
                 listen="0.0.0.0",
-                port=PORT,
+                port=PORT + 1,  # Use a different port for the bot
                 webhook_url=WEBHOOK_URL,
-                secret_token=os.getenv('WEBHOOK_SECRET', 'your-secret-token')
+                drop_pending_updates=True
             )
         else:
             # Running in development with polling
             self.logger.info("Starting bot in polling mode")
-            self.application.run_polling()
+            self.application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
+    # Configure logging
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    
+    # Get the bot token
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN not found in environment variables")
-    bot = RoadsurferBot(BOT_TOKEN)
-    bot.run()
+    
+    try:
+        bot = RoadsurferBot(BOT_TOKEN)
+        bot.run()
+    except Exception as e:
+        logging.error(f"Error starting bot: {e}", exc_info=True)

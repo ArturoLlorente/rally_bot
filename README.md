@@ -223,22 +223,46 @@ python run_bot.py
 1. Create a new Web Service on Render
 2. Connect your GitHub repository
 3. Configure the following settings:
+   - Environment: `Python 3`
    - Build Command: `pip install -r requirements.txt`
    - Start Command: `python run_bot.py`
+   - Instance Type: Free (or your preferred tier)
 
-4. Add the following environment variables:
+4. Add the following environment variables in Render dashboard:
    ```
    BOT_TOKEN=your_telegram_bot_token
-   PORT=8443  # or any port Render assigns
-   WEBHOOK_URL=https://your-app-name.onrender.com/webhook
-   WEBHOOK_SECRET=your-secret-token  # optional but recommended
+   PORT=10000
+   WEBHOOK_SECRET=your-secret-token  # Choose a secure random string
    ```
 
-The bot will automatically detect when it's running on Render and switch to webhook mode with the appropriate port.
+   Note: You don't need to set WEBHOOK_URL or RENDER_EXTERNAL_URL as they are automatically provided by Render.
+
+5. Important deployment notes:
+   - The bot will automatically detect it's running on Render
+   - It will use the correct port (10000 for Render free tier)
+   - Webhook URL will be automatically constructed using your Render service URL
+   - The webhook endpoint will be at `/webhook`
+
+6. Verify deployment:
+   - Check Render logs for successful startup
+   - Try sending a command to your bot (e.g., `/start`)
+   - If the bot doesn't respond, check the logs for any errors
+
+### Troubleshooting
+
+If the bot is not responding:
+
+1. Check Render logs for any error messages
+2. Verify your BOT_TOKEN is correct
+3. Make sure the webhook URL is properly set:
+   ```bash
+   curl https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
+   ```
+4. Ensure your Render service is running and accessible
+5. Check if the bot responds in local development mode
 
 ### Environment Variables
 
 - `BOT_TOKEN`: Your Telegram Bot token from BotFather
-- `PORT`: Port number for the webhook server (default: 8443)
-- `WEBHOOK_URL`: Full URL for the webhook endpoint
-- `WEBHOOK_SECRET`: Secret token for webhook security (optional)
+- `PORT`: Port number for the webhook server (default: 10000 for Render)
+- `WEBHOOK_SECRET`: Secret token for webhook security (recommended)
