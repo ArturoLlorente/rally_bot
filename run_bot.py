@@ -585,34 +585,34 @@ class RoadsurferBot:
         PORT = int(os.getenv('PORT', '10000'))
         WEBHOOK_URL = os.getenv('WEBHOOK_URL')
         
-        if not WEBHOOK_URL and 'RENDER' in os.environ:
-            # If running on Render.com and WEBHOOK_URL not set, construct it
-            service_url = os.getenv('RENDER_EXTERNAL_URL')
-            if service_url:
-                WEBHOOK_URL = f"{service_url}/webhook"
-        
-        if WEBHOOK_URL:
-            # Running in production with webhooks
-            self.logger.info(f"Starting bot in webhook mode on port {PORT}")
-            self.logger.info(f"Setting webhook URL to: {WEBHOOK_URL}")
-            
-            # Start Flask app in a separate thread for health checks
-            from threading import Thread
-            flask_thread = Thread(target=lambda: flask_app.run(host='0.0.0.0', port=PORT))
-            flask_thread.daemon = True
-            flask_thread.start()
-            
-            # Configure the webhook
-            self.application.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,  # Use a different port for the bot
-                webhook_url=WEBHOOK_URL,
-                drop_pending_updates=True
-            )
-        else:
+        #if not WEBHOOK_URL and 'RENDER' in os.environ:
+        #    # If running on Render.com and WEBHOOK_URL not set, construct it
+        #    service_url = os.getenv('RENDER_EXTERNAL_URL')
+        #    if service_url:
+        #        WEBHOOK_URL = f"{service_url}/webhook"
+        #
+        #if WEBHOOK_URL:
+        #    # Running in production with webhooks
+        #    self.logger.info(f"Starting bot in webhook mode on port {PORT}")
+        #    self.logger.info(f"Setting webhook URL to: {WEBHOOK_URL}")
+        #    
+        #    # Start Flask app in a separate thread for health checks
+        #    from threading import Thread
+        #    flask_thread = Thread(target=lambda: flask_app.run(host='0.0.0.0', port=PORT))
+        #    flask_thread.daemon = True
+        #    flask_thread.start()
+        #    
+        #    # Configure the webhook
+        #    self.application.run_webhook(
+        #        listen="0.0.0.0",
+        #        port=PORT,  # Use a different port for the bot
+        #        webhook_url=WEBHOOK_URL,
+        #        drop_pending_updates=True
+        #    )
+        #else:
             # Running in development with polling
-            self.logger.info("Starting bot in polling mode")
-            self.application.run_polling(drop_pending_updates=True)
+        self.logger.info("Starting bot in polling mode")
+        self.application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
