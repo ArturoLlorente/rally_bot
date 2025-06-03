@@ -8,8 +8,6 @@ from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
-import sys
-from flask import Flask, Response
 
 from api_utils import get_stations_data
 from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -17,17 +15,6 @@ from gui import gui
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Flask app for health checks
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def health_check():
-    return Response("Bot is running!", status=200)
-
-@flask_app.route('/webhook', methods=['POST'])
-def webhook():
-    return Response("Webhook endpoint!", status=200)
 
 def create_progress_bar(progress: int, total: int = 100, length: int = 20) -> str:
     """Create a pretty progress bar with percentage"""
@@ -47,7 +34,7 @@ class RoadsurferBot:
         # Initialize logging
         logging.basicConfig(
             level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.StreamHandler(),
                 logging.FileHandler('bot.log')
@@ -142,7 +129,7 @@ class RoadsurferBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         sent_message = await update.message.reply_text(
-            "¡Bienvenido al Bot de Roadsurfer Rally by Arturo! 🚐\n\n"
+            "¡Bienvenido al Bot de Roadsurfer Rally! 🚐\n\n"
             "Aquí puedes:\n"
             "• Ver rutas disponibles\n"
             "• Guardar estaciones favoritas\n"
@@ -205,10 +192,10 @@ class RoadsurferBot:
             # Check for new routes for favorites
             #
             
-            
+            self.stations_with_returns = new_stations
             self.logger.info("Processing routes for stations...")
             output_data = print_routes_for_stations(new_stations)
-            self.stations_with_returns = output_data
+            
             await self._check_new_routes(output_data, context)
             
             self.logger.info("Saving output to JSON...")
@@ -233,6 +220,7 @@ class RoadsurferBot:
 
     async def _check_new_routes(self, new_stations: List[Dict], context: ContextTypes.DEFAULT_TYPE) -> None:
         """Check for new routes matching users' favorite stations"""
+        print(new_stations)
         for user_id, favorite_stations in self.user_favorites.items():
             for station in new_stations:
                 if station['origin'] in favorite_stations:
@@ -398,10 +386,6 @@ class RoadsurferBot:
         message = update.message or update.callback_query.message
         
         try:
-            # First run the GUI function to generate/update the HTML file
-            await message.reply_text("🔄 Generando mapa interactivo...")
-            gui()
-            
             with open("rutas_interactivas.html", "rb") as f:
                 await message.reply_document(
                     document=InputFile(f, filename="rutas_interactivas.html"),
@@ -429,8 +413,10 @@ class RoadsurferBot:
             "*Otras Funciones:*\n"
             "🗺️ /descargar\\_mapa \\- Descargar mapa interactivo\n"
             "❓ /help \\- Mostrar este mensaje de ayuda\n\n"
-            "📱 *Tip:* Usa el menú de comandos de Telegram\n\n."
-            "Creado por @arlloren \\"
+            "*Ejemplos:*\n"
+            "`/agregar_favorito Madrid` \\- Añade Madrid a favoritos\n"
+            "`/eliminar_favorito Barcelona` \\- Elimina Barcelona de favoritos\n\n"
+            "📱 *Tip:* Usa el menú de comandos de Telegram\\."
         )
         try:
             await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -450,8 +436,10 @@ class RoadsurferBot:
                 "Otras Funciones:\n"
                 "🗺️ /descargar_mapa - Descargar mapa interactivo\n"
                 "❓ /help - Mostrar este mensaje de ayuda\n\n"
+                "Ejemplos:\n"
+                "/agregar_favorito Madrid - Añade Madrid a favoritos\n"
+                "/eliminar_favorito Barcelona - Elimina Barcelona de favoritos\n\n"
                 "📱 Tip: Usa el menú de comandos de Telegram."
-                "Creado por @arlloren"
             )
             await message.reply_text(plain_text)
 
@@ -580,55 +568,10 @@ class RoadsurferBot:
     def run(self) -> None:
         """Run the bot"""
         self.logger.info("Starting bot...")
-        
-        # Get environment variables
-        PORT = int(os.getenv('PORT', '10000'))
-        WEBHOOK_URL = os.getenv('WEBHOOK_URL')
-        
-        #if not WEBHOOK_URL and 'RENDER' in os.environ:
-        #    # If running on Render.com and WEBHOOK_URL not set, construct it
-        #    service_url = os.getenv('RENDER_EXTERNAL_URL')
-        #    if service_url:
-        #        WEBHOOK_URL = f"{service_url}/webhook"
-        #
-        #if WEBHOOK_URL:
-        #    # Running in production with webhooks
-        #    self.logger.info(f"Starting bot in webhook mode on port {PORT}")
-        #    self.logger.info(f"Setting webhook URL to: {WEBHOOK_URL}")
-        #    
-        #    # Start Flask app in a separate thread for health checks
-        #    from threading import Thread
-        #    flask_thread = Thread(target=lambda: flask_app.run(host='0.0.0.0', port=PORT))
-        #    flask_thread.daemon = True
-        #    flask_thread.start()
-        #    
-        #    # Configure the webhook
-        #    self.application.run_webhook(
-        #        listen="0.0.0.0",
-        #        port=PORT,  # Use a different port for the bot
-        #        webhook_url=WEBHOOK_URL,
-        #        drop_pending_updates=True
-        #    )
-        #else:
-            # Running in development with polling
-        self.logger.info("Starting bot in polling mode")
-        self.application.run_polling(drop_pending_updates=True)
+        self.application.run_polling()
 
 
 if __name__ == "__main__":
-    # Configure logging
-    logging.basicConfig(
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO
-    )
-    
-    # Get the bot token
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN not found in environment variables")
-    
-    try:
-        bot = RoadsurferBot(BOT_TOKEN)
-        bot.run()
-    except Exception as e:
-        logging.error(f"Error starting bot: {e}", exc_info=True)
+    BOT_TOKEN = "7735652005:AAHQSkb3ZkDtxbYJKLDqeLOjJCQJGJNcE98"
+    bot = RoadsurferBot(BOT_TOKEN)
+    bot.run()
