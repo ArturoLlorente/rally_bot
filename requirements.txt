@@ -1,7 +1,9 @@
-python-telegram-bot
-folium
-tqdm
-logging
-geopy
-branca
-python-dotenv
+python-telegram-bot>=20.7
+python-telegram-bot[webhooks]>=20.7
+folium>=0.14.0
+tqdm>=4.66.1
+geopy>=2.4.1
+branca>=0.6.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+urllib3>=2.1.0
