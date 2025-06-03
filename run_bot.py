@@ -605,7 +605,7 @@ class RoadsurferBot:
             # Configure the webhook
             self.application.run_webhook(
                 listen="0.0.0.0",
-                port=PORT + 1,  # Use a different port for the bot
+                port=PORT,  # Use a different port for the bot
                 webhook_url=WEBHOOK_URL,
                 drop_pending_updates=True
             )
