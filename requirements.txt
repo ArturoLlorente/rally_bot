@@ -1,4 +1,4 @@
-python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7
 #python-telegram-bot[webhooks]>=20.7
 folium==0.15.1
 tqdm>=4.66.1

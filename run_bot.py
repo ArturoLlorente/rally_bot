@@ -4,6 +4,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from telegram.constants import ParseMode
 import json
 import time
+from datetime import datetime
 from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
@@ -28,7 +29,9 @@ class RoadsurferBot:
         self.token = token
         self.DB_PATH = Path("station_routes.json")
         self.FAVORITES_PATH = Path("user_favorites.json")
-        self.UPDATE_COOLDOWN = 15 * 60  # 15 minutes in seconds
+        self.NOTIFICATION_HISTORY_PATH = Path("notification_history.json")
+        self.UPDATE_COOLDOWN = 30 * 60  # 30 minutes in seconds
+        self.UPDATE_COOLDOWN_LOCAL = 5 * 60#15 * 60  # 15 minutes in seconds
         self.last_update_time = 0
         
         # Initialize logging
@@ -45,10 +48,30 @@ class RoadsurferBot:
         # Load data
         self.stations_with_returns = self._load_stations()
         self.user_favorites = self._load_user_favorites()
+        self.notification_history = self._load_notification_history()
         
-        # Initialize application
-        self.application = ApplicationBuilder().token(self.token).build()
+        # Initialize application with job queue
+        self.application = (
+            ApplicationBuilder()
+            .token(self.token)
+            .concurrent_updates(True)
+            .build()
+        )
+        
+        # Setup handlers
         self._setup_handlers()
+        
+        # Setup auto-update job
+        if self.application.job_queue:
+            self.application.job_queue.run_repeating(
+                self._job_update_database,
+                interval=self.UPDATE_COOLDOWN,
+                first=10,
+                name='database_update'
+            )
+            self.logger.info("Auto-update job scheduled successfully")
+        else:
+            self.logger.error("Job queue not available. Auto-updates will not work.")
 
     def _load_stations(self) -> List[Dict]:
         """Load stations data from JSON file"""
@@ -74,6 +97,17 @@ class RoadsurferBot:
             self.logger.error(f"Error loading favorites: {e}")
             return {}
 
+    def _load_notification_history(self) -> Dict[str, List[Dict]]:
+        """Load notification history from JSON file"""
+        try:
+            if self.NOTIFICATION_HISTORY_PATH.exists():
+                with open(self.NOTIFICATION_HISTORY_PATH, 'r') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            self.logger.error(f"Error loading notification history: {e}")
+            return {}
+
     def _save_user_favorites(self) -> None:
         """Save user favorites to JSON file"""
         try:
@@ -83,6 +117,14 @@ class RoadsurferBot:
                 json.dump(data, f, indent=4)
         except Exception as e:
             self.logger.error(f"Error saving favorites: {e}")
+
+    def _save_notification_history(self) -> None:
+        """Save notification history to JSON file"""
+        try:
+            with open(self.NOTIFICATION_HISTORY_PATH, 'w') as f:
+                json.dump(self.notification_history, f, indent=4)
+        except Exception as e:
+            self.logger.error(f"Error saving notification history: {e}")
 
     async def _setup_commands(self) -> None:
         """Set up the bot commands in Telegram"""
@@ -129,7 +171,7 @@ class RoadsurferBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         sent_message = await update.message.reply_text(
-            "¡Bienvenido al Bot de Roadsurfer Rally! 🚐\n\n"
+            "¡Bienvenido al Bot de Roadsurfer Rally patrocinado por Arturo the Machine! 🚐\n\n"
             "Aquí puedes:\n"
             "• Ver rutas disponibles\n"
             "• Guardar estaciones favoritas\n"
@@ -156,10 +198,10 @@ class RoadsurferBot:
         message = update.message or update.callback_query.message
         current_time = time.time()
         
-        if current_time - self.last_update_time < self.UPDATE_COOLDOWN:
-            remaining = int((self.UPDATE_COOLDOWN - (current_time - self.last_update_time)) // 60) + 1
+        if current_time - self.last_update_time < self.UPDATE_COOLDOWN_LOCAL:
+            remaining = int((self.UPDATE_COOLDOWN_LOCAL - (current_time - self.last_update_time)) // 60) + 1
             await message.reply_text(
-                f"⚠️ La base de datos fue actualizada hace menos de 15 minutos. "
+                f"⚠️ La base de datos fue actualizada hace menos de {self.UPDATE_COOLDOWN_LOCAL // 60} minutos. "
                 f"Por favor espera {remaining} minutos."
             )
             return
@@ -182,19 +224,15 @@ class RoadsurferBot:
                 raise Exception("No se pudieron obtener los datos de las estaciones")
             
             self.logger.info(f"Received {len(stations_json)} stations")
-            self.logger.debug(f"First station data: {stations_json[0] if stations_json else 'None'}")
-                
+            
             self.logger.info("Getting stations with returns...")
             new_stations = await get_stations_with_returns(stations_json, progress_callback)
             if not new_stations:
                 raise Exception("No se encontraron rutas disponibles")
 
-            # Check for new routes for favorites
-            #
-            
-            self.stations_with_returns = new_stations
             self.logger.info("Processing routes for stations...")
             output_data = print_routes_for_stations(new_stations)
+            self.stations_with_returns = output_data
             
             await self._check_new_routes(output_data, context)
             
@@ -218,20 +256,87 @@ class RoadsurferBot:
             )
             await status_message.edit_text(error_message)
 
+    def _is_new_route(self, user_id: str, station: Dict) -> bool:
+        """Check if this route is new for the user"""
+        if user_id not in self.notification_history:
+            return True
+
+        # Create unique identifiers for each origin-destination pair
+        route_ids = []
+        for ret in station.get('returns', []):
+            route_id = f"{station['origin']}_{ret['destination']}"
+            for date in ret.get('available_dates', []):
+                route_id += f"_{date['startDate']}_{date['endDate']}"
+            route_ids.append(route_id)
+
+        # Check if any of these routes have been notified before
+        notified_routes = self.notification_history[user_id]
+        return not any(rid in notified_routes for rid in route_ids)
+
+    def _mark_route_as_notified(self, user_id: str, station: Dict) -> None:
+        """Mark a route as notified for a user"""
+        if user_id not in self.notification_history:
+            self.notification_history[user_id] = []
+
+        # Create unique identifiers for each origin-destination pair
+        for ret in station.get('returns', []):
+            route_id = f"{station['origin']}_{ret['destination']}"
+            for date in ret.get('available_dates', []):
+                route_id += f"_{date['startDate']}_{date['endDate']}"
+            
+            # Add to notification history if not already there
+            if route_id not in self.notification_history[user_id]:
+                self.notification_history[user_id].append(route_id)
+                
+        self._save_notification_history()
+
     async def _check_new_routes(self, new_stations: List[Dict], context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Check for new routes matching users' favorite stations"""
-        print(new_stations)
+        """Check for new routes matching users' favorite stations (both as origin and destination)"""
         for user_id, favorite_stations in self.user_favorites.items():
             for station in new_stations:
+                # Check if origin is in favorites
                 if station['origin'] in favorite_stations:
-                    # Check if this is a new route
-                    await self._notify_user(user_id, station, context)
+                    # Check each destination separately
+                    for ret in station.get('returns', []):
+                        single_route = {
+                            'origin': station['origin'],
+                            'returns': [ret]  # Only include this specific destination
+                        }
+                        if self._is_new_route(user_id, single_route):
+                            await self._notify_user(user_id, single_route, context, is_origin=True)
+                            self._mark_route_as_notified(user_id, single_route)
+                
+                # Check if any destination is in favorites
+                for ret in station.get('returns', []):
+                    if ret['destination'] in favorite_stations:
+                        # For destination matches, create a simplified route with just this destination
+                        matching_route = {
+                            'origin': station['origin'],
+                            'returns': [{
+                                'destination': ret['destination'],
+                                'available_dates': ret['available_dates']
+                            }]
+                        }
+                        if self._is_new_route(user_id, matching_route):
+                            await self._notify_user(user_id, matching_route, context, is_origin=False)
+                            self._mark_route_as_notified(user_id, matching_route)
 
-    async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE, is_origin: bool = True) -> None:
         """Send notification to user about new routes"""
         try:
-            message = f"🔔 ¡Nueva ruta disponible desde tu estación favorita!\n\n"
-            message += self.format_station_html(station)
+            if is_origin:
+                message = f"🔔 ¡Nueva ruta disponible desde tu estación favorita {station['origin']}!\n\n"
+                # For origin notifications, use the standard format
+                message += self.format_station_html(station)
+            else:
+                # For destination notifications, we know there's exactly one matching destination
+                dest = station['returns'][0]['destination']
+                message = f"🔔 ¡Nueva ruta disponible hacia tu estación favorita {dest}!\n\n"
+                message += f"📦 <b>Origen</b>: <b>{station['origin']}</b>\n"
+                message += f"🔁 <b>Destino</b>: <b>{dest}</b>\n"
+                for d in station['returns'][0]['available_dates']:
+                    message += f"📅 <code>{d['startDate']} → {d['endDate']}</code>\n"
+
             await context.bot.send_message(
                 chat_id=user_id,
                 text=message,
@@ -413,10 +518,8 @@ class RoadsurferBot:
             "*Otras Funciones:*\n"
             "🗺️ /descargar\\_mapa \\- Descargar mapa interactivo\n"
             "❓ /help \\- Mostrar este mensaje de ayuda\n\n"
-            "*Ejemplos:*\n"
-            "`/agregar_favorito Madrid` \\- Añade Madrid a favoritos\n"
-            "`/eliminar_favorito Barcelona` \\- Elimina Barcelona de favoritos\n\n"
-            "📱 *Tip:* Usa el menú de comandos de Telegram\\."
+            "📱 *Tip:* Usa el menú de comandos de Telegram\n\n."
+            "Bot creado por @arlloren"
         )
         try:
             await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -434,13 +537,11 @@ class RoadsurferBot:
                 "➕ /agregar_favorito - Añadir estación a favoritos\n"
                 "➖ /eliminar_favorito - Eliminar estación de favoritos\n\n"
                 "Otras Funciones:\n"
-                "🗺️ /descargar_mapa - Descargar mapa interactivo\n"
-                "❓ /help - Mostrar este mensaje de ayuda\n\n"
-                "Ejemplos:\n"
-                "/agregar_favorito Madrid - Añade Madrid a favoritos\n"
-                "/eliminar_favorito Barcelona - Elimina Barcelona de favoritos\n\n"
-                "📱 Tip: Usa el menú de comandos de Telegram."
-            )
+                "🗺️ /descargar\\_mapa \\- Descargar mapa interactivo\n"
+                "❓ /help \\- Mostrar este mensaje de ayuda\n\n"
+                "📱 *Tip:* Usa el menú de comandos de Telegram\n\n."
+                "Bot creado por @arlloren"
+                )  
             await message.reply_text(plain_text)
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -565,13 +666,63 @@ class RoadsurferBot:
         
         return "\n".join(lines)
 
+    async def _job_update_database(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Job to automatically update the database"""
+        try:
+            self.logger.info("Starting automatic database update...")
+            
+            # Get new data
+            stations_json = get_stations_data()
+            if not stations_json:
+                raise Exception("No se pudieron obtener los datos de las estaciones")
+            
+            self.logger.info(f"Received {len(stations_json)} stations")
+            
+            # Process stations
+            async def progress_callback(percent):
+                self.logger.info(f"Auto-update progress: {percent}%")
+            
+            new_stations = await get_stations_with_returns(stations_json, progress_callback)
+            if not new_stations:
+                raise Exception("No se encontraron rutas disponibles")
+            
+            # Process and save routes
+            output_data = print_routes_for_stations(new_stations)
+            # Update stations data
+            self.stations_with_returns = output_data
+            save_output_to_json(output_data)
+            
+            # Update timestamp
+            self.last_update_time = time.time()
+            
+            self.logger.info(
+                f"Auto-update completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}. "
+                f"Found {len(new_stations)} stations with routes."
+            )
+            
+            # Check for new routes and notify users
+            await self._check_new_routes(output_data, context)
+            
+        except Exception as e:
+            self.logger.error(f"Error in auto-update job: {e}", exc_info=True)
+
     def run(self) -> None:
         """Run the bot"""
         self.logger.info("Starting bot...")
-        self.application.run_polling()
+        try:
+            self.application.run_polling(drop_pending_updates=True)
+        except Exception as e:
+            self.logger.error(f"Error running bot: {e}", exc_info=True)
+            raise
 
 
 if __name__ == "__main__":
-    BOT_TOKEN = "7735652005:AAHQSkb3ZkDtxbYJKLDqeLOjJCQJGJNcE98"
-    bot = RoadsurferBot(BOT_TOKEN)
-    bot.run()
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN not found in environment variables")
+    
+    try:
+        bot = RoadsurferBot(BOT_TOKEN)
+        bot.run()
+    except Exception as e:
+        logging.error(f"Error starting bot: {e}", exc_info=True)
