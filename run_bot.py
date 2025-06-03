@@ -129,7 +129,7 @@ class RoadsurferBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         sent_message = await update.message.reply_text(
-            "¡Bienvenido al Bot de Roadsurfer Rally! 🚐\n\n"
+            "¡Bienvenido al Bot de Roadsurfer Rally by Arturo! 🚐\n\n"
             "Aquí puedes:\n"
             "• Ver rutas disponibles\n"
             "• Guardar estaciones favoritas\n"
@@ -416,8 +416,8 @@ class RoadsurferBot:
             "*Otras Funciones:*\n"
             "🗺️ /descargar\\_mapa \\- Descargar mapa interactivo\n"
             "❓ /help \\- Mostrar este mensaje de ayuda\n\n"
-            "📱 *Tip:* Usa el menú de comandos de Telegram\\."
-            "Creado por @arlloren"
+            "📱 *Tip:* Usa el menú de comandos de Telegram\n\n."
+            "Creado por @arlloren \\"
         )
         try:
             await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
