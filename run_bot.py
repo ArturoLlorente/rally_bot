@@ -416,10 +416,8 @@ class RoadsurferBot:
             "*Otras Funciones:*\n"
             "🗺️ /descargar\\_mapa \\- Descargar mapa interactivo\n"
             "❓ /help \\- Mostrar este mensaje de ayuda\n\n"
-            "*Ejemplos:*\n"
-            "`/agregar_favorito Madrid` \\- Añade Madrid a favoritos\n"
-            "`/eliminar_favorito Barcelona` \\- Elimina Barcelona de favoritos\n\n"
             "📱 *Tip:* Usa el menú de comandos de Telegram\\."
+            "Creado por @arlloren"
         )
         try:
             await message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN_V2)
@@ -439,10 +437,8 @@ class RoadsurferBot:
                 "Otras Funciones:\n"
                 "🗺️ /descargar_mapa - Descargar mapa interactivo\n"
                 "❓ /help - Mostrar este mensaje de ayuda\n\n"
-                "Ejemplos:\n"
-                "/agregar_favorito Madrid - Añade Madrid a favoritos\n"
-                "/eliminar_favorito Barcelona - Elimina Barcelona de favoritos\n\n"
                 "📱 Tip: Usa el menú de comandos de Telegram."
+                "Creado por @arlloren"
             )
             await message.reply_text(plain_text)
 
