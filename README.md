@@ -20,7 +20,7 @@ A Telegram bot that helps users find and track available vehicle transfer routes
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/ArturoLlorente/rally_bot.git
 cd rally_bot
 ```
 
@@ -92,7 +92,111 @@ The bot includes comprehensive error handling and logging:
 
 ## Contributing
 
-Feel free to submit issues, fork the repository, and create pull requests for any improvements.
+We love your input! We want to make contributing to Roadsurfer Rally Bot as easy and transparent as possible. Here's how you can contribute:
+
+### Development Process
+
+1. Fork the repository:
+   ```bash
+   # Clone your fork
+   git clone https://github.com/your-username/rally_bot.git
+   cd rally_bot
+
+   # Add the original repository as upstream
+   git remote add upstream https://github.com/ArturoLlorente/rally_bot.git
+   ```
+
+2. Create a new branch:
+   ```bash
+   # Update your local main
+   git checkout main
+   git pull upstream main
+
+   # Create a new feature branch
+   git checkout -b feature/your-feature-name
+   # or for bugfixes
+   git checkout -b fix/your-fix-name
+   ```
+
+3. Make your changes:
+   - Write meaningful commit messages
+   - Keep commits atomic and small
+   - Reference issues and pull requests liberally
+
+4. Push your changes:
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+5. Create a Pull Request:
+   - Go to your fork on GitHub
+   - Click 'Pull Request' button
+   - Select your feature branch
+   - Add a clear title and description
+   - Link any relevant issues
+
+### Branch Naming Convention
+
+- `feature/*`: For new features
+- `fix/*`: For bug fixes
+- `docs/*`: For documentation changes
+- `refactor/*`: For code refactoring
+- `test/*`: For test additions or modifications
+
+### Commit Message Guidelines
+
+Structure your commit messages like this:
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Types:
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, etc)
+- `refactor`: Code refactoring
+- `test`: Adding or modifying tests
+- `chore`: Maintenance tasks
+
+Example:
+```
+feat(map): add city filtering to interactive map
+
+- Add checkbox filters for cities
+- Implement dynamic route filtering
+- Update map display based on selection
+
+Closes #123
+```
+
+### Pull Request Process
+
+1. Update the README.md with details of changes if needed
+2. Update the requirements.txt if you add dependencies
+3. Make sure all tests pass and add new ones if needed
+4. Get a code review from maintainers
+
+### Code Style
+
+- Follow PEP 8 guidelines
+- Use type hints where possible
+- Add docstrings to functions and classes
+- Keep functions small and focused
+- Use meaningful variable names
+
+### Questions or Problems?
+
+Feel free to:
+- Open an issue for discussion
+- Ask questions in pull requests
+- Contact the maintainers directly
+
+We appreciate your contributions to making Roadsurfer Rally Bot better!
 
 ## License
 
