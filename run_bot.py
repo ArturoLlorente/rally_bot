@@ -9,13 +9,23 @@ from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+from flask import Flask, request
 
 from api_utils import get_stations_data
 from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
-from gui import gui
+from gui import RouteMapGenerator
 
 # Load environment variables
 load_dotenv()
+
+# Environment variables for deployment
+PORT = int(os.getenv('PORT', '10000'))  # Render uses port 10000 for free tier
+WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')  # For webhook security
+IS_RENDER = 'RENDER' in os.environ  # Check if running on Render.com
+DEBUG_MODE = True
+# Initialize Flask app for webhook
+flask_app = Flask(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 def create_progress_bar(progress: int, total: int = 100, length: int = 20) -> str:
     """Create a pretty progress bar with percentage"""
@@ -51,25 +61,35 @@ class RoadsurferBot:
         self.notification_history = self._load_notification_history()
         
         # Initialize application with job queue
-        self.application = (
-            ApplicationBuilder()
-            .token(self.token)
-            .concurrent_updates(True)
-            .build()
-        )
+        builder = ApplicationBuilder().token(self.token).concurrent_updates(True)
+        
+        # Configure webhook if running on Render
+        if IS_RENDER:
+            webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_URL', '')}/webhook"
+            builder.webhook(
+                webhook_url=webhook_url,
+                port=PORT,
+                secret_token=WEBHOOK_SECRET
+            )
+            self.logger.info(f"Webhook configured on port {PORT}")
+        
+        self.application = builder.build()
         
         # Setup handlers
         self._setup_handlers()
         
         # Setup auto-update job
         if self.application.job_queue:
-            self.application.job_queue.run_repeating(
-                self._job_update_database,
-                interval=self.UPDATE_COOLDOWN,
-                first=10,
-                name='database_update'
-            )
-            self.logger.info("Auto-update job scheduled successfully")
+            if DEBUG_MODE:
+                self.logger.info("Skipping auto-update job in debug mode")
+            else:
+                self.application.job_queue.run_repeating(
+                    self._job_update_database,
+                    interval=self.UPDATE_COOLDOWN,
+                    first=10,
+                    name='database_update'
+                )
+                self.logger.info("Auto-update job scheduled successfully")
         else:
             self.logger.error("Job queue not available. Auto-updates will not work.")
 
@@ -150,7 +170,7 @@ class RoadsurferBot:
         self.application.add_handler(CommandHandler("actualizar_rutas", self.update_database))
         self.application.add_handler(CommandHandler("ver_rutas", self.show_routes))
         self.application.add_handler(CommandHandler("favoritos", self.show_favorites))
-        self.application.add_handler(CommandHandler("agregar_favorito", self.agregar_favorito))
+        self.application.add_handler(CommandHandler("agregar_favorito", self.add_favorite))
         self.application.add_handler(CommandHandler("eliminar_favorito", self.remove_favorite))
         self.application.add_handler(CommandHandler("descargar_mapa", self.send_html_file))
         self.application.add_handler(CommandHandler("help", self.help_command))
@@ -377,7 +397,7 @@ class RoadsurferBot:
             text += f"• {station}\n"
         await message.reply_text(text)
 
-    async def agregar_favorito(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def add_favorite(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Add stations to favorites using a grid interface"""
         user_id = str(update.effective_user.id)
         
@@ -491,6 +511,14 @@ class RoadsurferBot:
         message = update.message or update.callback_query.message
         
         try:
+            if not self.stations_with_returns:
+                await message.reply_text(
+                    "No hay rutas disponibles. Usa /actualizar_rutas primero."
+                )
+                return    
+            map_generator = RouteMapGenerator()
+            map_generator.generate_map()
+            
             with open("rutas_interactivas.html", "rb") as f:
                 await message.reply_document(
                     document=InputFile(f, filename="rutas_interactivas.html"),
@@ -710,11 +738,31 @@ class RoadsurferBot:
         """Run the bot"""
         self.logger.info("Starting bot...")
         try:
-            self.application.run_polling(drop_pending_updates=True)
+            if IS_RENDER:
+                # Start the Flask application for webhook
+                self.logger.info("Starting webhook server...")
+                flask_app.run(host="0.0.0.0", port=PORT)
+            else:
+                # Run with polling in local environment
+                self.logger.info("Starting polling...")
+                self.application.run_polling(drop_pending_updates=True)
         except Exception as e:
             self.logger.error(f"Error running bot: {e}", exc_info=True)
             raise
 
+# Webhook endpoint
+@flask_app.route("/webhook", methods=["POST"])
+async def webhook_handler():
+    """Handle incoming webhook requests"""
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+        return {"ok": False, "error": "Invalid token"}, 403
+
+    try:
+        await bot.application.update_queue.put(Update.de_json(request.get_json(), bot.application.bot))
+        return {"ok": True, "error": ""}, 200
+    except Exception as e:
+        logging.error(f"Error processing update: {e}")
+        return {"ok": False, "error": str(e)}, 500
 
 if __name__ == "__main__":
     BOT_TOKEN = os.getenv("BOT_TOKEN")

@@ -1,7 +1,6 @@
 import folium
 from geopy.geocoders import Nominatim
 import time
-import os
 import json
 from branca.element import Element
 from urllib.parse import quote
@@ -19,7 +18,7 @@ class RouteMapGenerator:
         self.CACHE_PATH = Path("geocode_cache.json")
         self.OUTPUT_PATH = Path("rutas_interactivas.html")
         self.geocode_cache: Dict[str, Tuple[float, float]] = {}
-        self.geolocator = Nominatim(user_agent="route_mapper")
+        self.geolocator = Nominatim(user_agent="route_mapper", timeout=10)
         self.routes: List[Dict] = []
         
     def _load_cache(self) -> None:
@@ -54,13 +53,15 @@ class RouteMapGenerator:
             self.routes = []
             for entry in station_data:
                 origin = entry["origin"]
-                for ret in entry["returns"]:
-                    destination = ret["destination"]
-                    url = f"https://www.google.com/maps/dir/{quote(entry['origin_address'])}/{quote(ret['destination_address'])}"
-                    dates = ", ".join([f"{d['startDate']} - {d['endDate']}" for d in ret["available_dates"]])
+                for returns in entry["returns"]:
+                    destination = returns["destination"]
+                    url = f"https://www.google.com/maps/dir/{quote(entry['origin_address'])}/{quote(returns['destination_address'])}"
+                    dates = ", ".join([f"{d['startDate']} - {d['endDate']}" for d in returns["available_dates"]])
                     self.routes.append({
                         "origin": origin,
+                        "origin_address": entry["origin_address"],
                         "destination": destination,
+                        "destination_address": returns["destination_address"],
                         "url": url,
                         "dates": dates
                     })
@@ -69,31 +70,60 @@ class RouteMapGenerator:
             logger.error(f"Error loading routes: {e}")
             raise
 
-    def _geocode(self, city: str) -> Optional[Tuple[float, float]]:
-        """Geocode a city name with caching"""
+    def _geocode(self, address: str, city: str) -> Optional[Tuple[float, float]]:
+        """Geocode an address and city with caching and fallback."""
+        # Check if the city is already cached
         if city in self.geocode_cache:
             return tuple(self.geocode_cache[city])
         
         try:
-            location = self.geolocator.geocode(city)
+            # Attempt to geocode using the full address (address + city)
+            location = self.geolocator.geocode(f"{address}, {city}")
+            if location:
+                coords = (location.latitude, location.longitude)
+                self.geocode_cache[city] = coords  # Cache the result
+                self._save_cache()  # Save cache to file
+                logger.debug(f"Geocoded {city} ({address}): {coords}")
+                return coords
+            else:
+                logger.warning(f"Primary geocoding failed for '{address}, {city}'. Trying fallback...")
+            
+            location = self.geolocator.geocode(address)
             if location:
                 coords = (location.latitude, location.longitude)
                 self.geocode_cache[city] = coords
                 self._save_cache()
-                logger.debug(f"Geocoded {city}: {coords}")
+                logger.debug(f"Geocoded {city} (address only): {coords}")
                 return coords
+
+            # Fallback: Try geocoding with just the city name
+            location = self.geolocator.geocode(city)
+            if location:
+                coords = (location.latitude, location.longitude)
+                self.geocode_cache[city] = coords  # Cache the result
+                self._save_cache()  # Save cache to file
+                logger.debug(f"Fallback geocoded {city}: {coords}")
+                return coords
+            else:
+                logger.warning(f"Fallback geocoding failed for city '{city}'. No coordinates found.")
+
         except Exception as e:
-            logger.error(f"Error geocoding {city}: {e}")
-        
+            logger.error(f"Error geocoding '{address}, {city}': {e}")
+
+        # If all attempts fail, return None
         return None
+
 
     def _create_route_feature(self, route: Dict, idx: int) -> Optional[Dict]:
         """Create a GeoJSON feature for a route"""
-        origin_coords = self._geocode(route["origin"])
-        destination_coords = self._geocode(route["destination"])
+        origin_coords = self._geocode(route['origin_address'], route['origin'])
+        #time.sleep(1)
+        destination_coords = self._geocode(route['destination_address'], route['destination'])
+        #time.sleep(1)
         
         if not origin_coords or not destination_coords:
-            logger.warning(f"Could not geocode coordinates for route: {route['origin']} -> {route['destination']}")
+            #logger.warning(f"\033[92mCould not geocode coordinates for route: {route["origin_address"]}, {route['origin']} -> {route['destination_address']}, {route['destination']}\033[0m")
+            logger.warning(origin_coords, destination_coords)
             return None
 
         popup_html = f"""

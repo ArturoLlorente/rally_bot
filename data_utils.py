@@ -13,6 +13,29 @@ stations_data: Dict[int, Dict] = {}
 stations_with_returns: List[Dict] = []
 output_data: List[Dict] = []
 
+def cleanup_special_characters(address: str) -> str:
+    """Remove special characters from address"""
+    if not address:
+        return address
+    # Replace special characters with their ASCII equivalents
+    replacements = {
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+        "Ä": "Ae", "Ö": "OE", "Ü": "UE",
+        "Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U",
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u",
+        "ø": "oe", "Ø": "OE", "‘": "'", "’": "'", "“": '"', "”": '"',
+        ",": "", ";": "", ":": "", "!": "", "?": "", ".": "", "-": " ", "_": " ", "/": " ", "\\": " ", "|": " "
+    }
+        
+    for char, replacement in replacements.items():
+        address = address.replace(char, replacement)
+    # Remove parentheses and quotes
+    address = address.replace("(", "").replace(")", "").replace("'", "").replace('"', "")
+    # Normalize tabs and multiple spaces
+    address = address.replace("\t", " ")  # Replace tabs with a single space
+    address = " ".join(address.split())  # Collapse multiple spaces into one
+    return address
+
 def validate_station_data(station: dict) -> bool:
     """Validate that a station has all required fields"""
     if not isinstance(station, dict):
@@ -58,8 +81,14 @@ def process_station_destinations(station: dict) -> None:
             return
             
         origin_name = stations_data[station_id].get("name")
+        if origin_name:
+            origin_name = cleanup_special_characters(origin_name)
         origin_address = station.get("address")
         
+        # Ensure the address does not have any special characters like ä, ö, ü, ß, etc.
+        if origin_address:
+            origin_address = cleanup_special_characters(origin_address)
+            
         if not origin_name or not origin_address:
             logger.warning(f"Missing origin data for station {station_id}")
             return
@@ -80,7 +109,12 @@ def process_station_destinations(station: dict) -> None:
                 continue
                 
             return_name = stations_data[return_station_id].get("name")
+            if return_name:
+                return_name = cleanup_special_characters(return_name)
             destination_address = stations_data[return_station_id].get("address")
+            
+            if destination_address:
+                destination_address = cleanup_special_characters(destination_address)
             
             if not return_name or not destination_address:
                 logger.warning(f"Missing return data for station {return_station_id}")
