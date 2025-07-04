@@ -209,6 +209,7 @@ Created by @arlloren
 ## Acknowledgments
 
 - [python-telegram-bot](https://python-telegram-bot.org/) for the Telegram bot framework
+- [4mazon - roadsurfer-van-rally](https://github.com/4mazon/roadsurfer-van-rally) for the original idea and API
 
 ## Deployment
 

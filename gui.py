@@ -9,11 +9,11 @@ from typing import Dict, List, Tuple, Optional, Callable
 from pathlib import Path
 
 # Initialize logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+#logging.basicConfig(level=logging.INFO)
+#logger = logging.getLogger(__name__)
 
 class RouteMapGenerator:
-    def __init__(self):
+    def __init__(self, logger):
         self.DB_PATH = Path("station_routes.json")
         self.CACHE_PATH = Path("geocode_cache.json")
         self.OUTPUT_PATH = Path("rutas_interactivas.html")
@@ -21,15 +21,17 @@ class RouteMapGenerator:
         self.geolocator = Nominatim(user_agent="route_mapper", timeout=10)
         self.routes: List[Dict] = []
         
+        self.logger = logger
+        
     def _load_cache(self) -> None:
         """Load geocoding cache from file"""
         try:
             if self.CACHE_PATH.exists():
                 with open(self.CACHE_PATH, "r", encoding="utf-8") as f:
                     self.geocode_cache = json.load(f)
-                logger.info(f"Loaded {len(self.geocode_cache)} cached locations")
+                self.logger.info(f"Loaded {len(self.geocode_cache)} cached locations")
         except Exception as e:
-            logger.error(f"Error loading geocode cache: {e}")
+            self.logger.error(f"Error loading geocode cache: {e}")
             self.geocode_cache = {}
 
     def _save_cache(self) -> None:
@@ -37,9 +39,9 @@ class RouteMapGenerator:
         try:
             with open(self.CACHE_PATH, "w", encoding="utf-8") as f:
                 json.dump(self.geocode_cache, f, ensure_ascii=False, indent=2)
-            logger.info("Geocode cache saved successfully")
+            self.logger.info("Geocode cache saved successfully")
         except Exception as e:
-            logger.error(f"Error saving geocode cache: {e}")
+            self.logger.error(f"Error saving geocode cache: {e}")
 
     def _load_routes(self) -> None:
         """Load routes from JSON file"""
@@ -65,9 +67,9 @@ class RouteMapGenerator:
                         "url": url,
                         "dates": dates
                     })
-            logger.info(f"Loaded {len(self.routes)} routes")
+            self.logger.info(f"Loaded {len(self.routes)} routes")
         except Exception as e:
-            logger.error(f"Error loading routes: {e}")
+            self.logger.error(f"Error loading routes: {e}")
             raise
 
     def _geocode(self, address: str, city: str) -> Optional[Tuple[float, float]]:
@@ -83,17 +85,17 @@ class RouteMapGenerator:
                 coords = (location.latitude, location.longitude)
                 self.geocode_cache[city] = coords  # Cache the result
                 self._save_cache()  # Save cache to file
-                logger.debug(f"Geocoded {city} ({address}): {coords}")
+                self.logger.debug(f"Geocoded {city} ({address}): {coords}")
                 return coords
             else:
-                logger.warning(f"Primary geocoding failed for '{address}, {city}'. Trying fallback...")
+                self.logger.warning(f"Primary geocoding failed for '{address}, {city}'. Trying fallback...")
             
             location = self.geolocator.geocode(address)
             if location:
                 coords = (location.latitude, location.longitude)
                 self.geocode_cache[city] = coords
                 self._save_cache()
-                logger.debug(f"Geocoded {city} (address only): {coords}")
+                self.logger.debug(f"Geocoded {city} (address only): {coords}")
                 return coords
 
             # Fallback: Try geocoding with just the city name
@@ -102,13 +104,13 @@ class RouteMapGenerator:
                 coords = (location.latitude, location.longitude)
                 self.geocode_cache[city] = coords  # Cache the result
                 self._save_cache()  # Save cache to file
-                logger.debug(f"Fallback geocoded {city}: {coords}")
+                self.logger.debug(f"Fallback geocoded {city}: {coords}")
                 return coords
             else:
-                logger.warning(f"Fallback geocoding failed for city '{city}'. No coordinates found.")
+                self.logger.warning(f"Fallback geocoding failed for city '{city}'. No coordinates found.")
 
         except Exception as e:
-            logger.error(f"Error geocoding '{address}, {city}': {e}")
+            self.logger.error(f"Error geocoding '{address}, {city}': {e}")
 
         # If all attempts fail, return None
         return None
@@ -122,8 +124,7 @@ class RouteMapGenerator:
         #time.sleep(1)
         
         if not origin_coords or not destination_coords:
-            #logger.warning(f"\033[92mCould not geocode coordinates for route: {route["origin_address"]}, {route['origin']} -> {route['destination_address']}, {route['destination']}\033[0m")
-            logger.warning(origin_coords, destination_coords)
+            self.logger.warning(origin_coords, destination_coords)
             return None
 
         popup_html = f"""
@@ -308,17 +309,13 @@ class RouteMapGenerator:
 
             # Save map
             m.save(str(self.OUTPUT_PATH))
-            logger.info(f"Map saved successfully as {self.OUTPUT_PATH}")
+            self.logger.info(f"Map saved successfully as {self.OUTPUT_PATH}")
             
         except Exception as e:
-            logger.error(f"Error generating map: {e}")
+            self.logger.error(f"Error generating map: {e}")
             raise
 
 def gui(progress_callback: Optional[Callable[[int], None]] = None) -> None:
     """Main function to generate the interactive map"""
-    try:
-        map_generator = RouteMapGenerator()
-        map_generator.generate_map(progress_callback)
-    except Exception as e:
-        logger.error(f"Error in gui function: {e}")
-        raise
+    map_generator = RouteMapGenerator()
+    map_generator.generate_map(progress_callback)
