@@ -798,7 +798,7 @@ class RoadsurferBot:
 #        logging.error(f"Error processing update: {e}")
 #        return {"ok": False, "error": str(e)}, 500
 
-def main():
+def main(dummy1, dummy2):
 #if __name__ == "__main__":
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
