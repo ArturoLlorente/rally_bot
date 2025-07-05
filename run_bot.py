@@ -33,14 +33,14 @@ load_dotenv()
 
 PORT = int(os.getenv('PORT', '10000'))  # Render uses port 10000 for free tier
 WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')  # For webhook security
-IS_RENDER = 'RENDER' in os.environ  # Check if running on Render.com
+IS_RENDER = False#'RENDER' in os.environ  # Check if running on Render.com
 DEBUG_MODE = True
 
 # Initialize Flask app for webhook
-flask_app = Flask(__name__)
+#flask_app = Flask(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("telegram.ext").setLevel(logging.INFO)
-flask_app.logger.propagate = False
+#flask_app.logger.propagate = False
 
 class RoadsurferBot:
     def __init__(self, token: str):
@@ -785,18 +785,18 @@ class RoadsurferBot:
             raise
 
 # Webhook endpoint
-@flask_app.route("/webhook", methods=["POST"])
-async def webhook_handler():
-    """Handle incoming webhook requests"""
-    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
-        return {"ok": False, "error": "Invalid token"}, 403
-
-    try:
-        await bot.application.update_queue.put(Update.de_json(request.get_json(), bot.application.bot))
-        return {"ok": True, "error": ""}, 200
-    except Exception as e:
-        logging.error(f"Error processing update: {e}")
-        return {"ok": False, "error": str(e)}, 500
+#@flask_app.route("/webhook", methods=["POST"])
+#async def webhook_handler():
+#    """Handle incoming webhook requests"""
+#    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+#        return {"ok": False, "error": "Invalid token"}, 403
+#
+#    try:
+#        await bot.application.update_queue.put(Update.de_json(request.get_json(), bot.application.bot))
+#        return {"ok": True, "error": ""}, 200
+#    except Exception as e:
+#        logging.error(f"Error processing update: {e}")
+#        return {"ok": False, "error": str(e)}, 500
 
 if __name__ == "__main__":
     BOT_TOKEN = os.getenv("BOT_TOKEN")
