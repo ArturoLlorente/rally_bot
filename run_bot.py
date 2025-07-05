@@ -246,7 +246,7 @@ class RoadsurferBot:
         current_time = time.time()
         
         self.logger.info((f"Recibido request para actualizar rutas el {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} por el usuario"
-                          f" {self._check_user_id_name(str(update.effective_user.id))} "))
+                          f" '{self._check_user_id_name(str(update.effective_user.id))}' "))
         
         if current_time - self.last_update_time < self.UPDATE_COOLDOWN_LOCAL:
             remaining = int((self.UPDATE_COOLDOWN_LOCAL - (current_time - self.last_update_time)) // 60) + 1

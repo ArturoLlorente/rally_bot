@@ -10,3 +10,4 @@ urllib3>=2.1.0
 flask==3.0.0
 selenium==4.34.0
 time
+gunicorn
