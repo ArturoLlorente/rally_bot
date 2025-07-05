@@ -798,7 +798,8 @@ class RoadsurferBot:
 #        logging.error(f"Error processing update: {e}")
 #        return {"ok": False, "error": str(e)}, 500
 
-if __name__ == "__main__":
+def main():
+#if __name__ == "__main__":
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN not found in environment variables")
