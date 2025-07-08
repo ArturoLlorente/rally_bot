@@ -7,6 +7,3 @@ branca>=0.6.0
 python-dotenv==1.0.0
 requests==2.31.0
 urllib3>=2.1.0
-flask==3.0.0
-#time=>=0.1.0
-gunicorn==23.0.0

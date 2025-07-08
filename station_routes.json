@@ -1,113 +1,73 @@
 [
     {
-        "origin": "Augsburg",
-        "origin_address": "Dieselstrasse 31",
+        "origin": "Aix Marseille",
+        "origin_address": "5110 D6 13480 Cabriès",
         "returns": [
             {
-                "destination": "Aix Marseille",
-                "destination_address": "5110 D6 13480 Cabriès",
+                "destination": "Regensburg",
+                "destination_address": "Berliner Strasse 41a",
+                "available_dates": [
+                    {
+                        "startDate": "23/07/2025",
+                        "endDate": "30/07/2025"
+                    }
+                ],
+                "model_name": "Camper Castle",
+                "model_image": "phpiAEDLE.jpeg"
+            }
+        ]
+    },
+    {
+        "origin": "Barcelona",
+        "origin_address": "Carrer d´Andorra 65 Local 2 08840 Viladecans",
+        "returns": [
+            {
+                "destination": "Duisburg",
+                "destination_address": "Forststr 36",
                 "available_dates": [
                     {
                         "startDate": "22/07/2025",
                         "endDate": "29/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Cozy Cottage",
+                "model_image": "phphhaNpf.jpeg"
             }
         ]
     },
     {
-        "origin": "Bielefeld",
-        "origin_address": "Heidsieker Heide 53 33739 Bielefeld Theesen",
+        "origin": "Bilbao",
+        "origin_address": "Poligono Ugaldeguren 3 Parcela 18 1 Elemento 2",
         "returns": [
             {
-                "destination": "Bordeaux",
-                "destination_address": "138 Avenue de lArgonne 33700 Merignac",
+                "destination": "Lindau Wangen",
+                "destination_address": "Ebnetstrasse 31",
                 "available_dates": [
                     {
-                        "startDate": "16/07/2025",
-                        "endDate": "23/07/2025"
+                        "startDate": "22/07/2025",
+                        "endDate": "29/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Camper Castle",
+                "model_image": "phpiAEDLE.jpeg"
             }
         ]
     },
     {
-        "origin": "Bordeaux",
-        "origin_address": "138 Avenue de lArgonne 33700 Merignac",
+        "origin": "Duisburg",
+        "origin_address": "Forststr 36",
         "returns": [
             {
-                "destination": "Erfurt",
-                "destination_address": "Alte Mittelhaeuser Strasse 17 19",
+                "destination": "Paris Airport CDG",
+                "destination_address": "2 rue Gustave Eiffel",
                 "available_dates": [
                     {
-                        "startDate": "21/07/2025",
-                        "endDate": "28/07/2025"
+                        "startDate": "23/07/2025",
+                        "endDate": "30/07/2025"
                     }
-                ]
-            }
-        ]
-    },
-    {
-        "origin": "Bremen",
-        "origin_address": "Westerfeld 19",
-        "returns": [
-            {
-                "destination": "Bordeaux",
-                "destination_address": "138 Avenue de lArgonne 33700 Merignac",
-                "available_dates": [
-                    {
-                        "startDate": "18/07/2025",
-                        "endDate": "25/07/2025"
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "origin": "Constance Aach",
-        "origin_address": "Im Aachtal 1a 78267 Aach",
-        "returns": [
-            {
-                "destination": "Paris South Orly",
-                "destination_address": "33 route de Versailles 91160 Champlan",
-                "available_dates": [
-                    {
-                        "startDate": "08/07/2025",
-                        "endDate": "15/07/2025"
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "origin": "Erfurt",
-        "origin_address": "Alte Mittelhaeuser Strasse 17 19",
-        "returns": [
-            {
-                "destination": "Geneva Pays de Gex France",
-                "destination_address": "133 Chemin de Baritella 01630 Saint Jean de Gonville",
-                "available_dates": [
-                    {
-                        "startDate": "11/07/2025",
-                        "endDate": "18/07/2025"
-                    }
-                ]
-            }
-        ]
-    },
-    {
-        "origin": "Hamburg",
-        "origin_address": "Billbrookdeich 11",
-        "returns": [
-            {
-                "destination": "Nantes",
-                "destination_address": "24 Chemin des Bateliers 44300 Nantes",
-                "available_dates": [
-                    {
-                        "startDate": "19/07/2025",
-                        "endDate": "26/07/2025"
-                    }
-                ]
+                ],
+                "model_name": "Road House",
+                "model_image": "phpMFALOL.jpeg"
             }
         ]
     },
@@ -123,33 +83,93 @@
                         "startDate": "22/07/2025",
                         "endDate": "29/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Beach Hostel",
+                "model_image": "phpGonHeh.jpeg"
             }
         ]
     },
     {
-        "origin": "Lindau Wangen",
-        "origin_address": "Ebnetstrasse 31",
+        "origin": "Lyon",
+        "origin_address": "1201 Avenue des Pre Seigneurs 01120 Dagneux",
         "returns": [
             {
-                "destination": "Vienna",
-                "destination_address": "Lichtblaustr 13 1220 Vienna",
+                "destination": "Erfurt",
+                "destination_address": "Alte Mittelhaeuser Strasse 17 19",
                 "available_dates": [
                     {
-                        "startDate": "18/07/2025",
-                        "endDate": "25/07/2025"
+                        "startDate": "22/07/2025",
+                        "endDate": "29/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Road House",
+                "model_image": "phpMFALOL.jpeg"
+            }
+        ]
+    },
+    {
+        "origin": "Madrid",
+        "origin_address": "Calle Mir 10",
+        "returns": [
+            {
+                "destination": "Constance Aach",
+                "destination_address": "Im Aachtal 1a 78267 Aach",
+                "available_dates": [
+                    {
+                        "startDate": "23/07/2025",
+                        "endDate": "30/07/2025"
+                    }
+                ],
+                "model_name": "Camper Castle",
+                "model_image": "phpiAEDLE.jpeg"
+            }
+        ]
+    },
+    {
+        "origin": "Malaga",
+        "origin_address": "Calle Jose Calderon 120",
+        "returns": [
+            {
+                "destination": "Regensburg",
+                "destination_address": "Berliner Strasse 41a",
+                "available_dates": [
+                    {
+                        "startDate": "24/07/2025",
+                        "endDate": "31/07/2025"
+                    }
+                ],
+                "model_name": "Road House",
+                "model_image": "phpMFALOL.jpeg"
+            }
+        ]
+    },
+    {
+        "origin": "Munich",
+        "origin_address": "Ingolstaedterstr 172",
+        "returns": [
+            {
+                "destination": "Barcelona",
+                "destination_address": "Carrer d´Andorra 65 Local 2 08840 Viladecans",
+                "available_dates": [
+                    {
+                        "startDate": "24/07/2025",
+                        "endDate": "31/07/2025"
+                    }
+                ],
+                "model_name": "Road House",
+                "model_image": "phpMFALOL.jpeg"
             },
             {
-                "destination": "Bordeaux",
-                "destination_address": "138 Avenue de lArgonne 33700 Merignac",
+                "destination": "Valencia",
+                "destination_address": "C N 2 Parcela 16 46220 Picassent Valencia",
                 "available_dates": [
                     {
-                        "startDate": "19/07/2025",
-                        "endDate": "26/07/2025"
+                        "startDate": "24/07/2025",
+                        "endDate": "31/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Road House",
+                "model_image": "phpMFALOL.jpeg"
             }
         ]
     },
@@ -158,30 +178,34 @@
         "origin_address": "24 Chemin des Bateliers 44300 Nantes",
         "returns": [
             {
-                "destination": "Stuttgart",
-                "destination_address": "Ostheimer Weg 15 70825 Korntal Muenchingen",
+                "destination": "Erfurt",
+                "destination_address": "Alte Mittelhaeuser Strasse 17 19",
                 "available_dates": [
                     {
-                        "startDate": "17/07/2025",
-                        "endDate": "24/07/2025"
+                        "startDate": "23/07/2025",
+                        "endDate": "30/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Beach Hostel",
+                "model_image": "phpGonHeh.jpeg"
             }
         ]
     },
     {
-        "origin": "Seattle",
-        "origin_address": "3820 6th Ave S",
+        "origin": "Nuremberg",
+        "origin_address": "Benno Strauss Str 45",
         "returns": [
             {
-                "destination": "Las Vegas",
-                "destination_address": "3385 N Las Vegas Blvd",
+                "destination": "Bordeaux",
+                "destination_address": "138 Avenue de lArgonne 33700 Merignac",
                 "available_dates": [
                     {
-                        "startDate": "20/08/2025",
-                        "endDate": "27/08/2025"
+                        "startDate": "22/07/2025",
+                        "endDate": "29/07/2025"
                     }
-                ]
+                ],
+                "model_name": "Couple Cottage",
+                "model_image": "phpBJKKBh.jpeg"
             }
         ]
     }

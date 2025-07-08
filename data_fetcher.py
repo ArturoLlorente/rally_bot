@@ -4,6 +4,7 @@ import json
 from typing import Dict, List, Optional
 from json import loads
 from urllib.request import Request, urlopen
+from urllib.parse import urlencode
 import logging
 from typing import Dict, Optional, Union
 from http.client import HTTPResponse
@@ -22,7 +23,7 @@ class StationDataFetcher:
 
         self.url_stations = "https://booking.roadsurfer.com/api/en/rally/stations"
         self.url_timeframes = "https://booking.roadsurfer.com/api/en/rally/timeframes"
-        self.url_directions = "https://www.google.com/maps/dir"
+        self.url_search = "https://booking.roadsurfer.com/api/es/rally/search"
         
         self.base_headers = {
             "Accept": "application/json, text/plain, */*",
@@ -122,6 +123,7 @@ class StationDataFetcher:
                 destination_address = self.cleanup_special_characters(destination_address)
 
                 available_dates = self.get_station_transfer_dates(station_id, return_station_id)
+                camper_data = self.get_booking_data(station_id, return_station_id, available_dates)
 
                 dates_output = []
                 for date in available_dates:
@@ -132,12 +134,18 @@ class StationDataFetcher:
                     except ValueError as e:
                         self.logger.warning(f"Error parsing dates: {e}")
                         continue
+                    
+                for camper in camper_data:
+                    model_name = camper["model"]["name"]
+                    model_image = camper["model"]["images"][0]['image']["url"].split("/")[-1]
 
                 if dates_output:  # Only add if there are valid dates
                     station_output["returns"].append({
                         "destination": return_name,
                         "destination_address": destination_address,
-                        "available_dates": dates_output
+                        "available_dates": dates_output,
+                        "model_name": model_name,
+                        "model_image": model_image,
                     })
 
             self.output_data.append(station_output)
@@ -168,6 +176,32 @@ class StationDataFetcher:
             self.logger.error(f"Error getting transfer dates: {e}")
             return []
         
+    def get_booking_data(self, origin_station_id: int, destination_station_id: int, available_dates: list) -> Optional[Dict]:
+        """Get booking data for a specific route"""
+        try:
+            headers = self.base_headers.copy()
+            headers.update({"X-Requested-Alias": "rally.search"})
+            
+            params = {
+                "stations": f"[[{origin_station_id},{destination_station_id}]]",
+                "range": f'["{available_dates[0]["startDate"].split("T")[0]}","{available_dates[0]["endDate"].split("T")[0]}"]',
+                "currency": "EUR",
+                "models": json.dumps([])  # Convertir la lista a string JSON
+            }
+                
+            query_string = urlencode(params)
+            url = f"{self.url_search}?{query_string}"
+                        
+            data = self.get_json_from_url(url, headers)
+            if not data:
+                self.logger.error(f"No booking data found for route {origin_station_id} -> {destination_station_id}")
+                return None
+
+            return data
+
+        except Exception as e:
+            self.logger.error(f"Error getting booking data: {e}")
+            return None
         
     
     def get_json_from_url(self, url: str, headers: dict) -> Optional[Union[Dict, list]]:
@@ -286,6 +320,9 @@ class StationDataFetcher:
         except Exception as e:
             self.logger.error(f"Error in get_stations_data: {e}")
             return []
+        
+        
+        
 
     def save_output_to_json(self, file_path="station_routes.json") -> None:
         """Save processed data to JSON file"""

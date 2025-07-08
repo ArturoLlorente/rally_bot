@@ -12,7 +12,6 @@ from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
-from flask import Flask, request
 
 #from api_utils import get_stations_data
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -31,10 +30,9 @@ logging.basicConfig(
 
 load_dotenv()
 
-PORT = int(os.getenv('PORT', '10000'))  # Render uses port 10000 for free tier
-WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')  # For webhook security
-IS_RENDER = False#'RENDER' in os.environ  # Check if running on Render.com
-DEBUG_MODE = True
+#PORT = int(os.getenv('PORT', '10000'))  # Render uses port 10000 for free tier
+#WEBHOOK_SECRET = os.getenv('WEBHOOK_SECRET', '')  # For webhook security
+DEBUG_MODE = False
 
 # Initialize Flask app for webhook
 #flask_app = Flask(__name__)
@@ -49,6 +47,7 @@ class RoadsurferBot:
         self.FAVORITES_PATH = Path("user_favorites.json")
         self.NOTIFICATION_HISTORY_PATH = Path("notification_history.json")
         self.USER_NAMES = Path("user_names.json")
+        self.ASSETS_FOLDER = Path("assets")
         self.UPDATE_COOLDOWN = 30 * 60  # 30 minutes in seconds
         self.UPDATE_COOLDOWN_LOCAL = 5 * 60 # 5 minutes in seconds
         self.last_update_time = 0
@@ -65,14 +64,6 @@ class RoadsurferBot:
         
         # Initialize application with job queue
         builder = ApplicationBuilder().token(self.token).concurrent_updates(True)        
-        # Configure webhook if running on Render
-        if IS_RENDER:
-            builder.webhook(
-                webhook_url=f"https://{os.getenv('RENDER_EXTERNAL_URL', '')}/webhook",
-                port=PORT,
-                secret_token=WEBHOOK_SECRET
-            )
-            self.logger.info(f"Webhook configured on port {PORT}")
         
         self.application = builder.build()
         
@@ -203,6 +194,7 @@ class RoadsurferBot:
         self.application.add_handler(CommandHandler("agregar_favorito", self.add_favorite))
         self.application.add_handler(CommandHandler("eliminar_favorito", self.remove_favorite))
         self.application.add_handler(CommandHandler("descargar_mapa", self.send_html_file))
+        self.application.add_handler(CommandHandler("descargar_foto", self.send_jpeg_file))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -245,7 +237,7 @@ class RoadsurferBot:
         message = update.message or update.callback_query.message
         current_time = time.time()
         
-        self.logger.info((f"Recibido request para actualizar rutas el {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} por el usuario"
+        self.logger.info((f"Recibido request para actualizar rutas por el usuario"
                           f" '{self._check_user_id_name(str(update.effective_user.id))}' "))
         
         if current_time - self.last_update_time < self.UPDATE_COOLDOWN_LOCAL:
@@ -254,7 +246,7 @@ class RoadsurferBot:
                 f"⚠️ La base de datos fue actualizada hace menos de {self.UPDATE_COOLDOWN_LOCAL // 60} minutos. "
                 f"Por favor espera {remaining} minutos."
             )
-            self.logger.info(f"Update request ignored. Last update was {self.last_update_time} seconds ago.")
+            self.logger.info(f"Update request ignored. Last update was {current_time - self.last_update_time} seconds ago.")
             return
 
         status_message = await message.reply_text(
@@ -279,9 +271,7 @@ class RoadsurferBot:
             self.logger.info("Processing routes for stations...")
             output_data = self.data_fetcher.print_routes_for_stations()
             self.stations_with_returns = output_data
-            
-            await self._check_new_routes(output_data, context)
-            
+                        
             self.data_fetcher.save_output_to_json(self.DB_PATH)
             await self._check_new_routes(output_data, context)
             
@@ -374,7 +364,8 @@ class RoadsurferBot:
             if is_origin:
                 message = f"🔔 ¡Nueva ruta disponible desde tu estación favorita {station['origin']}!\n\n"
                 # For origin notifications, use the standard format
-                message += self.format_station_html(station)
+                msg_output, image_path = self.format_station_html(station)
+                message += msg_output
             else:
                 # For destination notifications, we know there's exactly one matching destination
                 dest = station['returns'][0]['destination']
@@ -404,8 +395,9 @@ class RoadsurferBot:
             return
 
         for station in self.stations_with_returns:
-            msg = self.format_station_html(station)
+            msg, image_path = self.format_station_html(station)
             await message.reply_text(msg, parse_mode=ParseMode.HTML)
+            await self.send_jpeg_file(update, context, image_path=image_path)
             
         self.logger.info(f"Sent {len(self.stations_with_returns)} routes to user {self._check_user_id_name(str(update.effective_user.id))}")
 
@@ -438,28 +430,21 @@ class RoadsurferBot:
             
             
         try:
-            all_stations = sorted(self.data_fetcher.valid_stations)
-        except Exception as e:
-            self.logger.info(f"Error loading valid stations from data fetcher: {e}. Trying to load from cache.")
-        try:
-            with open("geocode_cache.json", "r", encoding='utf-8') as f:
-                all_stations = sorted(json.load(f).keys())
-        except Exception as e2:
-            self.logger.error(f"Error loading geocode cache: {e2}")
-            await update.message.reply_text("❌ Error al cargar la lista de estaciones.")
-            return
-
-        # If no arguments, show the grid of available stations
-        try:
+            # Attempt to get stations from the data fetcher
             if self.data_fetcher.valid_stations:
                 all_stations = sorted(self.data_fetcher.valid_stations)
             else:
-                with open("geocode_cache.json", "r", encoding='utf-8') as f:
-                    all_stations = sorted(json.load(f).keys())
+                raise ValueError("No valid stations in data fetcher.")
         except Exception as e:
-            self.logger.error(f"Error loading geocode cache: {e}")
-            await update.message.reply_text("❌ Error al cargar la lista de estaciones.")
-            return
+            self.logger.info(f"Error loading valid stations from data fetcher: {e}. Trying to load from cache.")
+            try:
+                # Fallback: Load stations from geocode_cache.json
+                with open("geocode_cache.json", "r", encoding="utf-8") as f:
+                    all_stations = sorted(json.load(f).keys())
+            except Exception as e2:
+                self.logger.error(f"Error loading geocode cache: {e2}")
+                await update.message.reply_text("❌ Error al cargar la lista de estaciones.")
+                return
 
         # Filter out stations that are already in favorites
         available_stations = [s for s in all_stations if s not in self.user_favorites[user_id]]
@@ -580,6 +565,23 @@ class RoadsurferBot:
             await message.reply_text("❌ Error al enviar el archivo.")
             
         self.logger.info(f"Sent interactive map to user {self._check_user_id_name(str(update.effective_user.id))}")
+        
+    async def send_jpeg_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE, image_path: str = r"C:\Users\llorenteanaa\Documents\rally_bot\assets\phpBJKKBh_small.jpeg") -> None:
+        """Send the JPEG image of the map"""
+        # Get the appropriate message object based on update type
+        message = update.message or update.callback_query.message
+        
+        try:
+            
+            with open(image_path, "rb") as f:
+                await message.reply_photo(
+                    photo=InputFile(f, filename="image_path", ),
+                )
+        except Exception as e:
+            self.logger.error(f"Error sending JPEG file: {e}")
+            await message.reply_text("❌ Error al enviar la imagen.")
+            
+        self.logger.info(f"Sent interactive map image to user {self._check_user_id_name(str(update.effective_user.id))}")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show detailed help message with all available commands"""
@@ -711,8 +713,7 @@ class RoadsurferBot:
         else:
             await query.message.edit_text("ℹ️ No se realizaron cambios en tus favoritos.")
 
-    @staticmethod
-    def format_station_html(station: dict) -> str:
+    def format_station_html(self, station: dict) -> str:
         """Format station information as HTML"""
         lines = [f"📦 <b>Origen</b>: <b>{station['origin']}</b>"]
         
@@ -720,12 +721,16 @@ class RoadsurferBot:
             lines.append(f"🔁 <b>Destino</b>: <b>{ret['destination']}</b>")
             for d in ret.get("available_dates", []):
                 lines.append(f"📅 <code>{d['startDate']} → {d['endDate']}</code>")
+            
+            lines.append(f"🚐 <code>{ret.get('model_name', 'Modelo desconocido')}</code>")
+            image_path = os.path.join(self.ASSETS_FOLDER, ret.get("model_image"))
         
-        return "\n".join(lines)
+        return "\n".join(lines), image_path
 
     async def _job_update_database(self, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Job to automatically update the database"""
         try:
+            current_time = time.time()
             self.logger.info("Starting automatic database update...")
             
             # Get new data
@@ -743,6 +748,8 @@ class RoadsurferBot:
             output_data = self.data_fetcher.print_routes_for_stations()
             # Update stations data
             self.stations_with_returns = output_data
+            
+            
             self.data_fetcher.save_output_to_json(self.DB_PATH)
             
             # Update timestamp
@@ -756,6 +763,8 @@ class RoadsurferBot:
             
             # Check for new routes and notify users
             await self._check_new_routes(output_data, context)
+            
+            self.last_update_time = current_time
             
         except Exception as e:
             self.logger.error(f"Error in auto-update job: {e}", exc_info=True)
@@ -772,14 +781,9 @@ class RoadsurferBot:
         """Run the bot"""
         self.logger.info("Starting bot...")
         try:
-            if IS_RENDER:
-                # Start the Flask application for webhook
-                self.logger.info("Starting webhook server...")
-                flask_app.run(host="0.0.0.0", port=PORT)
-            else:
-                # Run with polling in local environment
-                self.logger.info("Starting polling...")
-                self.application.run_polling(drop_pending_updates=True)
+            # Run with polling in local environment
+            self.logger.info("Starting polling...")
+            self.application.run_polling(drop_pending_updates=True)
         except Exception as e:
             self.logger.error(f"Error running bot: {e}", exc_info=True)
             raise
@@ -798,8 +802,7 @@ class RoadsurferBot:
 #        logging.error(f"Error processing update: {e}")
 #        return {"ok": False, "error": str(e)}, 500
 
-def main(dummy1, dummy2):
-#if __name__ == "__main__":
+if __name__ == "__main__":
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN not found in environment variables")
