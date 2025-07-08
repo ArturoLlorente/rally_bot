@@ -194,7 +194,7 @@ class RoadsurferBot:
         self.application.add_handler(CommandHandler("agregar_favorito", self.add_favorite))
         self.application.add_handler(CommandHandler("eliminar_favorito", self.remove_favorite))
         self.application.add_handler(CommandHandler("descargar_mapa", self.send_html_file))
-        self.application.add_handler(CommandHandler("descargar_foto", self.send_jpeg_file))
+        self.application.add_handler(CommandHandler("last_update", self.check_last_update_time_time))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -582,6 +582,20 @@ class RoadsurferBot:
             await message.reply_text("❌ Error al enviar la imagen.")
             
         self.logger.info(f"Sent interactive map image to user {self._check_user_id_name(str(update.effective_user.id))}")
+        
+    async def check_last_update_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show the last update time of the database"""
+        # Get the appropriate message object based on update type
+        message = update.message or update.callback_query.message
+        
+        if self.last_update_time == 0:
+            await message.reply_text("La base de datos aún no ha sido actualizada.")
+            return
+        
+        last_update = datetime.fromtimestamp(self.last_update_time).strftime('%Y-%m-%d %H:%M:%S')
+        await message.reply_text(f"La base de datos fue actualizada por última vez el {last_update}.")
+        
+        self.logger.info(f"Last update time sent to user {self._check_user_id_name(str(update.effective_user.id))}")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show detailed help message with all available commands"""
@@ -738,7 +752,8 @@ class RoadsurferBot:
                         
             # Process stations
             async def progress_callback(percent):
-                self.logger.info(f"Auto-update progress: {percent}%")
+                if percent % 10 == 0:
+                    self.logger.info(f"Auto-update progress: {percent}%")
             
             await self.data_fetcher.get_stations_with_returns(progress_callback)
             if not self.data_fetcher.stations_with_returns:
