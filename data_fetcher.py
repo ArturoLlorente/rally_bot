@@ -128,9 +128,9 @@ class StationDataFetcher:
                 dates_output = []
                 for date in available_dates:
                     try:
-                        start_date = datetime.strptime(date["startDate"][:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                        end_date = datetime.strptime(date["endDate"][:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-                        dates_output.append({"startDate": start_date, "endDate": end_date})
+                        start_date = datetime.strptime(date["startDate"][:10], "%Y-%m-%d")
+                        end_date = datetime.strptime(date["endDate"][:10], "%Y-%m-%d")
+                        dates_output.append({"startDate": start_date.strftime("%d/%m/%Y"), "endDate": end_date.strftime("%d/%m/%Y")})
                     except ValueError as e:
                         self.logger.warning(f"Error parsing dates: {e}")
                         continue
@@ -146,7 +146,10 @@ class StationDataFetcher:
                         "available_dates": dates_output,
                         "model_name": model_name,
                         "model_image": model_image,
+                        "roadsurfer_url": f"https://booking.roadsurfer.com/en/rally/pick?pickup_date={start_date}&return_date={end_date}&currency=EUR&startStation={station_id}&endStation={return_station_id}",
                     })
+
+
 
             self.output_data.append(station_output)
             return True

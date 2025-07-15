@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    
+        <script>
+            L_NO_TOUCH = false;
+            L_DISABLE_3D = false;
+        </script>
+    
+    <style>html, body {width: 100%;height: 100%;margin: 0;padding: 0;}</style>
+    <style>#map {position:absolute;top:0;bottom:0;right:0;left:0;}</style>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_7c6fbbfc0f5146820cc3b274f81921d4 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+        
+</head>
+<body>
+    
+    
+        <style>
+            #map {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 300px;
+                bottom: 0;
+                z-index: 0;
+            }
+            #route-sidebar {
+                position: absolute;
+                top: 0;
+                right: 0;
+                width: 300px;
+                height: 100%;
+                overflow-y: auto;
+                background: white;
+                z-index: 1000;
+                border-left: 1px solid #ccc;
+                padding: 10px;
+                font-family: Arial, sans-serif;
+                font-size: 14px;
+            }
+            #route-sidebar ul {
+                list-style: none;
+                padding-left: 0;
+            }
+            #route-sidebar li {
+                cursor: pointer;
+                margin: 5px 0;
+                padding: 5px;
+                border-bottom: 1px solid #eee;
+            }
+            #route-sidebar li:hover {
+                background-color: #f0f0f0;
+            }
+        </style>
+
+        <script>
+            var routeLayers = {};
+
+            function highlightRoute(key) {
+                for (const k in routeLayers) {
+                    routeLayers[k].setStyle({ color: 'blue' });
+                }
+                if (routeLayers[key]) {
+                    routeLayers[key].setStyle({ color: 'green' });
+                    routeLayers[key].bringToFront();
+                }
+            }
+
+            function applyCityFilter() {
+                const checkboxes = document.querySelectorAll('.city-filter:checked');
+                const selectedCities = Array.from(checkboxes).map(cb => cb.value);
+
+                const routeItems = document.querySelectorAll('.route-item');
+                for (let item of routeItems) {
+                    const origin = item.getAttribute('data-origin');
+                    const destination = item.getAttribute('data-destination');
+                    const id = item.getAttribute('data-id');
+                    const match = selectedCities.length === 0 || selectedCities.includes(origin) || selectedCities.includes(destination);
+
+                    item.style.display = match ? 'block' : 'none';
+
+                    if (routeLayers[id]) {
+                        routeLayers[id].setStyle({ opacity: match ? 1 : 0 });
+                    }
+                }
+            }
+        </script>
+        
+    
+        <div id='route-sidebar'>
+            <h3>Filtro de ciudades</h3>
+            <div id="city-filters">
+        
+                <label>
+                    <input type="checkbox" class="city-filter" value="Aix Marseille" onchange="applyCityFilter()">
+                    Aix Marseille
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Barcelona" onchange="applyCityFilter()">
+                    Barcelona
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Bilbao" onchange="applyCityFilter()">
+                    Bilbao
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Bordeaux" onchange="applyCityFilter()">
+                    Bordeaux
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Constance Aach" onchange="applyCityFilter()">
+                    Constance Aach
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Duisburg" onchange="applyCityFilter()">
+                    Duisburg
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Erfurt" onchange="applyCityFilter()">
+                    Erfurt
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Karlsruhe" onchange="applyCityFilter()">
+                    Karlsruhe
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Lindau Wangen" onchange="applyCityFilter()">
+                    Lindau Wangen
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Lyon" onchange="applyCityFilter()">
+                    Lyon
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Madrid" onchange="applyCityFilter()">
+                    Madrid
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Malaga" onchange="applyCityFilter()">
+                    Malaga
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Munich" onchange="applyCityFilter()">
+                    Munich
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Nantes" onchange="applyCityFilter()">
+                    Nantes
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Nuremberg" onchange="applyCityFilter()">
+                    Nuremberg
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Paris Airport CDG" onchange="applyCityFilter()">
+                    Paris Airport CDG
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Regensburg" onchange="applyCityFilter()">
+                    Regensburg
+                </label><br>
+            
+                <label>
+                    <input type="checkbox" class="city-filter" value="Valencia" onchange="applyCityFilter()">
+                    Valencia
+                </label><br>
+            </div><hr><h3>Rutas</h3><ul id='route-list'>
+            <li class='route-item' data-origin="Aix Marseille" data-destination="Regensburg" data-id="route0">
+                <b>Aix Marseille ➜ Regensburg</b><br>
+                <a href="https://www.google.com/maps/dir/5110%20D6%2013480%20Cabri%C3%83%C2%A8s/Berliner%20Strasse%2041a" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 23/07/2025 - 30/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Barcelona" data-destination="Duisburg" data-id="route1">
+                <b>Barcelona ➜ Duisburg</b><br>
+                <a href="https://www.google.com/maps/dir/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans/Forststr%2036" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 22/07/2025 - 29/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Bilbao" data-destination="Lindau Wangen" data-id="route2">
+                <b>Bilbao ➜ Lindau Wangen</b><br>
+                <a href="https://www.google.com/maps/dir/Poligono%20Ugaldeguren%203%20Parcela%2018%201%20Elemento%202/Ebnetstrasse%2031" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 22/07/2025 - 29/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Duisburg" data-destination="Paris Airport CDG" data-id="route3">
+                <b>Duisburg ➜ Paris Airport CDG</b><br>
+                <a href="https://www.google.com/maps/dir/Forststr%2036/2%20rue%20Gustave%20Eiffel" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 23/07/2025 - 30/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Karlsruhe" data-destination="Nantes" data-id="route4">
+                <b>Karlsruhe ➜ Nantes</b><br>
+                <a href="https://www.google.com/maps/dir/Nobelstr%2016%2016a/24%20Chemin%20des%20Bateliers%2044300%20Nantes" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 22/07/2025 - 29/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Lyon" data-destination="Erfurt" data-id="route5">
+                <b>Lyon ➜ Erfurt</b><br>
+                <a href="https://www.google.com/maps/dir/1201%20Avenue%20des%20Pre%20Seigneurs%2001120%20Dagneux/Alte%20Mittelhaeuser%20Strasse%2017%2019" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 22/07/2025 - 29/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Madrid" data-destination="Constance Aach" data-id="route6">
+                <b>Madrid ➜ Constance Aach</b><br>
+                <a href="https://www.google.com/maps/dir/Calle%20Mir%2010/Im%20Aachtal%201a%2078267%20Aach" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 23/07/2025 - 30/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Malaga" data-destination="Regensburg" data-id="route7">
+                <b>Malaga ➜ Regensburg</b><br>
+                <a href="https://www.google.com/maps/dir/Calle%20Jose%20Calderon%20120/Berliner%20Strasse%2041a" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 24/07/2025 - 31/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Munich" data-destination="Barcelona" data-id="route8">
+                <b>Munich ➜ Barcelona</b><br>
+                <a href="https://www.google.com/maps/dir/Ingolstaedterstr%20172/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 24/07/2025 - 31/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Munich" data-destination="Valencia" data-id="route9">
+                <b>Munich ➜ Valencia</b><br>
+                <a href="https://www.google.com/maps/dir/Ingolstaedterstr%20172/C%20N%202%20Parcela%2016%2046220%20Picassent%20Valencia" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 24/07/2025 - 31/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Nantes" data-destination="Erfurt" data-id="route10">
+                <b>Nantes ➜ Erfurt</b><br>
+                <a href="https://www.google.com/maps/dir/24%20Chemin%20des%20Bateliers%2044300%20Nantes/Alte%20Mittelhaeuser%20Strasse%2017%2019" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 23/07/2025 - 30/07/2025
+            </li>
+            
+            <li class='route-item' data-origin="Nuremberg" data-destination="Bordeaux" data-id="route11">
+                <b>Nuremberg ➜ Bordeaux</b><br>
+                <a href="https://www.google.com/maps/dir/Benno%20Strauss%20Str%2045/138%20Avenue%20de%20lArgonne%2033700%20Merignac" target="_blank">Ver ruta en Google Maps</a><br>
+                Fechas: 22/07/2025 - 29/07/2025
+            </li>
+            </ul></div>
+    
+            <div class="folium-map" id="map_7c6fbbfc0f5146820cc3b274f81921d4" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_7c6fbbfc0f5146820cc3b274f81921d4 = L.map(
+                "map_7c6fbbfc0f5146820cc3b274f81921d4",
+                {
+                    center: [48.5, 9.0],
+                    crs: L.CRS.EPSG3857,
+                    zoom: 5,
+                    zoomControl: true,
+                    preferCanvas: false,
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_b5f8510f6b74fe81bd7f3289524cece9 = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {"attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors", "detectRetina": false, "maxNativeZoom": 19, "maxZoom": 19, "minZoom": 0, "noWrap": false, "opacity": 1, "subdomains": "abc", "tms": false}
+            );
+        
+    
+            tile_layer_b5f8510f6b74fe81bd7f3289524cece9.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_88f055c16f3579fe7a234c1dcbe0fe1b = L.geoJson(null, {
+                onEachFeature: geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_onEachFeature,
+            
+                style: geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_styler,
+        });
+
+        function geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_add (data) {
+            geo_json_88f055c16f3579fe7a234c1dcbe0fe1b
+                .addData(data);
+        }
+            geo_json_88f055c16f3579fe7a234c1dcbe0fe1b_add({"features": [{"geometry": {"coordinates": [[5.3786102, 43.3055875], [12.1856416, 48.9746379]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eAix Marseille \u279c Regensburg\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/5110%20D6%2013480%20Cabri%C3%83%C2%A8s/Berliner%20Strasse%2041a\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 23/07/2025 - 30/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_6aa435b180d5c4788edc4b045ac8e4cb = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_1ac1f0623124cec1a16c483c0867f335 = $(`<div id="html_1ac1f0623124cec1a16c483c0867f335" style="width: 100.0%; height: 100.0%;">         <b>Aix Marseille ➜ Regensburg</b><br>         <a href="https://www.google.com/maps/dir/5110%20D6%2013480%20Cabri%C3%83%C2%A8s/Berliner%20Strasse%2041a" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 23/07/2025 - 30/07/2025         </div>`)[0];
+                popup_6aa435b180d5c4788edc4b045ac8e4cb.setContent(html_1ac1f0623124cec1a16c483c0867f335);
+            
+        
+
+        geo_json_88f055c16f3579fe7a234c1dcbe0fe1b.bindPopup(popup_6aa435b180d5c4788edc4b045ac8e4cb)
+        ;
+
+        
+    
+    
+            geo_json_88f055c16f3579fe7a234c1dcbe0fe1b.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_b214924d772ee1471a9d8f9991c2613e_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_b214924d772ee1471a9d8f9991c2613e_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_b214924d772ee1471a9d8f9991c2613e = L.geoJson(null, {
+                onEachFeature: geo_json_b214924d772ee1471a9d8f9991c2613e_onEachFeature,
+            
+                style: geo_json_b214924d772ee1471a9d8f9991c2613e_styler,
+        });
+
+        function geo_json_b214924d772ee1471a9d8f9991c2613e_add (data) {
+            geo_json_b214924d772ee1471a9d8f9991c2613e
+                .addData(data);
+        }
+            geo_json_b214924d772ee1471a9d8f9991c2613e_add({"features": [{"geometry": {"coordinates": [[2.177073, 41.3825802], [6.751994, 51.3950574]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eBarcelona \u279c Duisburg\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans/Forststr%2036\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 22/07/2025 - 29/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_0eb65755325f2940860d1e42a122e35d = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_59b86012e69763d1663b7fb4c544b696 = $(`<div id="html_59b86012e69763d1663b7fb4c544b696" style="width: 100.0%; height: 100.0%;">         <b>Barcelona ➜ Duisburg</b><br>         <a href="https://www.google.com/maps/dir/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans/Forststr%2036" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 22/07/2025 - 29/07/2025         </div>`)[0];
+                popup_0eb65755325f2940860d1e42a122e35d.setContent(html_59b86012e69763d1663b7fb4c544b696);
+            
+        
+
+        geo_json_b214924d772ee1471a9d8f9991c2613e.bindPopup(popup_0eb65755325f2940860d1e42a122e35d)
+        ;
+
+        
+    
+    
+            geo_json_b214924d772ee1471a9d8f9991c2613e.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_ecbd90d8450af2c7d64ceae66e26eb5c = L.geoJson(null, {
+                onEachFeature: geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_onEachFeature,
+            
+                style: geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_styler,
+        });
+
+        function geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_add (data) {
+            geo_json_ecbd90d8450af2c7d64ceae66e26eb5c
+                .addData(data);
+        }
+            geo_json_ecbd90d8450af2c7d64ceae66e26eb5c_add({"features": [{"geometry": {"coordinates": [[-2.9350039, 43.2630018], [9.7411738, 47.6100463]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eBilbao \u279c Lindau Wangen\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Poligono%20Ugaldeguren%203%20Parcela%2018%201%20Elemento%202/Ebnetstrasse%2031\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 22/07/2025 - 29/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_0c06d03574e12c2d35831c732bbe841e = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_dc7293d0cba7607340e3121ef4aba5ff = $(`<div id="html_dc7293d0cba7607340e3121ef4aba5ff" style="width: 100.0%; height: 100.0%;">         <b>Bilbao ➜ Lindau Wangen</b><br>         <a href="https://www.google.com/maps/dir/Poligono%20Ugaldeguren%203%20Parcela%2018%201%20Elemento%202/Ebnetstrasse%2031" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 22/07/2025 - 29/07/2025         </div>`)[0];
+                popup_0c06d03574e12c2d35831c732bbe841e.setContent(html_dc7293d0cba7607340e3121ef4aba5ff);
+            
+        
+
+        geo_json_ecbd90d8450af2c7d64ceae66e26eb5c.bindPopup(popup_0c06d03574e12c2d35831c732bbe841e)
+        ;
+
+        
+    
+    
+            geo_json_ecbd90d8450af2c7d64ceae66e26eb5c.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_96b624032e9590466e8151e58c3eeee8_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_96b624032e9590466e8151e58c3eeee8_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_96b624032e9590466e8151e58c3eeee8 = L.geoJson(null, {
+                onEachFeature: geo_json_96b624032e9590466e8151e58c3eeee8_onEachFeature,
+            
+                style: geo_json_96b624032e9590466e8151e58c3eeee8_styler,
+        });
+
+        function geo_json_96b624032e9590466e8151e58c3eeee8_add (data) {
+            geo_json_96b624032e9590466e8151e58c3eeee8
+                .addData(data);
+        }
+            geo_json_96b624032e9590466e8151e58c3eeee8_add({"features": [{"geometry": {"coordinates": [[6.751994, 51.3950574], [2.571082, 49.0068908]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eDuisburg \u279c Paris Airport CDG\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Forststr%2036/2%20rue%20Gustave%20Eiffel\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 23/07/2025 - 30/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_39c1986b01881e8ae09613ccecdb6bc0 = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_40cd510d177c7c816befe00f69079761 = $(`<div id="html_40cd510d177c7c816befe00f69079761" style="width: 100.0%; height: 100.0%;">         <b>Duisburg ➜ Paris Airport CDG</b><br>         <a href="https://www.google.com/maps/dir/Forststr%2036/2%20rue%20Gustave%20Eiffel" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 23/07/2025 - 30/07/2025         </div>`)[0];
+                popup_39c1986b01881e8ae09613ccecdb6bc0.setContent(html_40cd510d177c7c816befe00f69079761);
+            
+        
+
+        geo_json_96b624032e9590466e8151e58c3eeee8.bindPopup(popup_39c1986b01881e8ae09613ccecdb6bc0)
+        ;
+
+        
+    
+    
+            geo_json_96b624032e9590466e8151e58c3eeee8.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8 = L.geoJson(null, {
+                onEachFeature: geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_onEachFeature,
+            
+                style: geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_styler,
+        });
+
+        function geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_add (data) {
+            geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8
+                .addData(data);
+        }
+            geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8_add({"features": [{"geometry": {"coordinates": [[8.3767764, 48.9371452], [-1.5136913, 47.2218935]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eKarlsruhe \u279c Nantes\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Nobelstr%2016%2016a/24%20Chemin%20des%20Bateliers%2044300%20Nantes\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 22/07/2025 - 29/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_5d225e0d9b0c1fd18a7d969152b8e03f = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_5998dee3e261d5e450e10e7e55e841de = $(`<div id="html_5998dee3e261d5e450e10e7e55e841de" style="width: 100.0%; height: 100.0%;">         <b>Karlsruhe ➜ Nantes</b><br>         <a href="https://www.google.com/maps/dir/Nobelstr%2016%2016a/24%20Chemin%20des%20Bateliers%2044300%20Nantes" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 22/07/2025 - 29/07/2025         </div>`)[0];
+                popup_5d225e0d9b0c1fd18a7d969152b8e03f.setContent(html_5998dee3e261d5e450e10e7e55e841de);
+            
+        
+
+        geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8.bindPopup(popup_5d225e0d9b0c1fd18a7d969152b8e03f)
+        ;
+
+        
+    
+    
+            geo_json_93ac1d2ea0843cb71daaa5cdaea2fde8.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_f497d5bdc1b5b03310e10284c3e9fad3_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_f497d5bdc1b5b03310e10284c3e9fad3_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_f497d5bdc1b5b03310e10284c3e9fad3 = L.geoJson(null, {
+                onEachFeature: geo_json_f497d5bdc1b5b03310e10284c3e9fad3_onEachFeature,
+            
+                style: geo_json_f497d5bdc1b5b03310e10284c3e9fad3_styler,
+        });
+
+        function geo_json_f497d5bdc1b5b03310e10284c3e9fad3_add (data) {
+            geo_json_f497d5bdc1b5b03310e10284c3e9fad3
+                .addData(data);
+        }
+            geo_json_f497d5bdc1b5b03310e10284c3e9fad3_add({"features": [{"geometry": {"coordinates": [[4.8320114, 45.7578137], [11.0092206, 51.0251985]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eLyon \u279c Erfurt\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/1201%20Avenue%20des%20Pre%20Seigneurs%2001120%20Dagneux/Alte%20Mittelhaeuser%20Strasse%2017%2019\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 22/07/2025 - 29/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_9e5550e14186448c8cf14a518cc7192a = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_4c123a9b047565711e8977b8f6385df1 = $(`<div id="html_4c123a9b047565711e8977b8f6385df1" style="width: 100.0%; height: 100.0%;">         <b>Lyon ➜ Erfurt</b><br>         <a href="https://www.google.com/maps/dir/1201%20Avenue%20des%20Pre%20Seigneurs%2001120%20Dagneux/Alte%20Mittelhaeuser%20Strasse%2017%2019" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 22/07/2025 - 29/07/2025         </div>`)[0];
+                popup_9e5550e14186448c8cf14a518cc7192a.setContent(html_4c123a9b047565711e8977b8f6385df1);
+            
+        
+
+        geo_json_f497d5bdc1b5b03310e10284c3e9fad3.bindPopup(popup_9e5550e14186448c8cf14a518cc7192a)
+        ;
+
+        
+    
+    
+            geo_json_f497d5bdc1b5b03310e10284c3e9fad3.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_e888724d693c1446c8cd95ecc04f21ef_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_e888724d693c1446c8cd95ecc04f21ef_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_e888724d693c1446c8cd95ecc04f21ef = L.geoJson(null, {
+                onEachFeature: geo_json_e888724d693c1446c8cd95ecc04f21ef_onEachFeature,
+            
+                style: geo_json_e888724d693c1446c8cd95ecc04f21ef_styler,
+        });
+
+        function geo_json_e888724d693c1446c8cd95ecc04f21ef_add (data) {
+            geo_json_e888724d693c1446c8cd95ecc04f21ef
+                .addData(data);
+        }
+            geo_json_e888724d693c1446c8cd95ecc04f21ef_add({"features": [{"geometry": {"coordinates": [[-3.5805013, 40.3978174], [9.2442945, 47.8106317]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eMadrid \u279c Constance Aach\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Calle%20Mir%2010/Im%20Aachtal%201a%2078267%20Aach\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 23/07/2025 - 30/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_e881147800ec8a84bff8c42af344bf08 = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_d3cc3618e7c64d0f8dbffb7dce5672ce = $(`<div id="html_d3cc3618e7c64d0f8dbffb7dce5672ce" style="width: 100.0%; height: 100.0%;">         <b>Madrid ➜ Constance Aach</b><br>         <a href="https://www.google.com/maps/dir/Calle%20Mir%2010/Im%20Aachtal%201a%2078267%20Aach" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 23/07/2025 - 30/07/2025         </div>`)[0];
+                popup_e881147800ec8a84bff8c42af344bf08.setContent(html_d3cc3618e7c64d0f8dbffb7dce5672ce);
+            
+        
+
+        geo_json_e888724d693c1446c8cd95ecc04f21ef.bindPopup(popup_e881147800ec8a84bff8c42af344bf08)
+        ;
+
+        
+    
+    
+            geo_json_e888724d693c1446c8cd95ecc04f21ef.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_fa1a41c540a153402a529ef154fd906d_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_fa1a41c540a153402a529ef154fd906d_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_fa1a41c540a153402a529ef154fd906d = L.geoJson(null, {
+                onEachFeature: geo_json_fa1a41c540a153402a529ef154fd906d_onEachFeature,
+            
+                style: geo_json_fa1a41c540a153402a529ef154fd906d_styler,
+        });
+
+        function geo_json_fa1a41c540a153402a529ef154fd906d_add (data) {
+            geo_json_fa1a41c540a153402a529ef154fd906d
+                .addData(data);
+        }
+            geo_json_fa1a41c540a153402a529ef154fd906d_add({"features": [{"geometry": {"coordinates": [[-4.5420757, 36.7264944], [12.1856416, 48.9746379]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eMalaga \u279c Regensburg\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Calle%20Jose%20Calderon%20120/Berliner%20Strasse%2041a\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 24/07/2025 - 31/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_49444d1931d6ea9007c64ff29fc0f06d = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_aff8d511a6b7b8434f654dbd293025e8 = $(`<div id="html_aff8d511a6b7b8434f654dbd293025e8" style="width: 100.0%; height: 100.0%;">         <b>Malaga ➜ Regensburg</b><br>         <a href="https://www.google.com/maps/dir/Calle%20Jose%20Calderon%20120/Berliner%20Strasse%2041a" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 24/07/2025 - 31/07/2025         </div>`)[0];
+                popup_49444d1931d6ea9007c64ff29fc0f06d.setContent(html_aff8d511a6b7b8434f654dbd293025e8);
+            
+        
+
+        geo_json_fa1a41c540a153402a529ef154fd906d.bindPopup(popup_49444d1931d6ea9007c64ff29fc0f06d)
+        ;
+
+        
+    
+    
+            geo_json_fa1a41c540a153402a529ef154fd906d.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_91d9123bec9e1ac2982f83263a419729_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_91d9123bec9e1ac2982f83263a419729_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_91d9123bec9e1ac2982f83263a419729 = L.geoJson(null, {
+                onEachFeature: geo_json_91d9123bec9e1ac2982f83263a419729_onEachFeature,
+            
+                style: geo_json_91d9123bec9e1ac2982f83263a419729_styler,
+        });
+
+        function geo_json_91d9123bec9e1ac2982f83263a419729_add (data) {
+            geo_json_91d9123bec9e1ac2982f83263a419729
+                .addData(data);
+        }
+            geo_json_91d9123bec9e1ac2982f83263a419729_add({"features": [{"geometry": {"coordinates": [[11.5886607, 48.2044164], [2.177073, 41.3825802]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eMunich \u279c Barcelona\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Ingolstaedterstr%20172/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 24/07/2025 - 31/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_69c6c213170eaecec9fc92978e6f9308 = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_e9410b012cbe91edfca73858d7a3d78d = $(`<div id="html_e9410b012cbe91edfca73858d7a3d78d" style="width: 100.0%; height: 100.0%;">         <b>Munich ➜ Barcelona</b><br>         <a href="https://www.google.com/maps/dir/Ingolstaedterstr%20172/Carrer%20d%C3%82%C2%B4Andorra%2065%20Local%202%2008840%20Viladecans" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 24/07/2025 - 31/07/2025         </div>`)[0];
+                popup_69c6c213170eaecec9fc92978e6f9308.setContent(html_e9410b012cbe91edfca73858d7a3d78d);
+            
+        
+
+        geo_json_91d9123bec9e1ac2982f83263a419729.bindPopup(popup_69c6c213170eaecec9fc92978e6f9308)
+        ;
+
+        
+    
+    
+            geo_json_91d9123bec9e1ac2982f83263a419729.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_bff3cf75c7cc8557855b7ecaddf22d90_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_bff3cf75c7cc8557855b7ecaddf22d90_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_bff3cf75c7cc8557855b7ecaddf22d90 = L.geoJson(null, {
+                onEachFeature: geo_json_bff3cf75c7cc8557855b7ecaddf22d90_onEachFeature,
+            
+                style: geo_json_bff3cf75c7cc8557855b7ecaddf22d90_styler,
+        });
+
+        function geo_json_bff3cf75c7cc8557855b7ecaddf22d90_add (data) {
+            geo_json_bff3cf75c7cc8557855b7ecaddf22d90
+                .addData(data);
+        }
+            geo_json_bff3cf75c7cc8557855b7ecaddf22d90_add({"features": [{"geometry": {"coordinates": [[11.5886607, 48.2044164], [-0.474279, 39.353638]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eMunich \u279c Valencia\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Ingolstaedterstr%20172/C%20N%202%20Parcela%2016%2046220%20Picassent%20Valencia\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 24/07/2025 - 31/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_e547f7f23f6c1103e3bd39b850329f78 = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_ad9bd64f1a14b476dbbc2e1be0401763 = $(`<div id="html_ad9bd64f1a14b476dbbc2e1be0401763" style="width: 100.0%; height: 100.0%;">         <b>Munich ➜ Valencia</b><br>         <a href="https://www.google.com/maps/dir/Ingolstaedterstr%20172/C%20N%202%20Parcela%2016%2046220%20Picassent%20Valencia" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 24/07/2025 - 31/07/2025         </div>`)[0];
+                popup_e547f7f23f6c1103e3bd39b850329f78.setContent(html_ad9bd64f1a14b476dbbc2e1be0401763);
+            
+        
+
+        geo_json_bff3cf75c7cc8557855b7ecaddf22d90.bindPopup(popup_e547f7f23f6c1103e3bd39b850329f78)
+        ;
+
+        
+    
+    
+            geo_json_bff3cf75c7cc8557855b7ecaddf22d90.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_1115b799d760a4430025d47f7e332999_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_1115b799d760a4430025d47f7e332999_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_1115b799d760a4430025d47f7e332999 = L.geoJson(null, {
+                onEachFeature: geo_json_1115b799d760a4430025d47f7e332999_onEachFeature,
+            
+                style: geo_json_1115b799d760a4430025d47f7e332999_styler,
+        });
+
+        function geo_json_1115b799d760a4430025d47f7e332999_add (data) {
+            geo_json_1115b799d760a4430025d47f7e332999
+                .addData(data);
+        }
+            geo_json_1115b799d760a4430025d47f7e332999_add({"features": [{"geometry": {"coordinates": [[-1.5136913, 47.2218935], [11.0092206, 51.0251985]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eNantes \u279c Erfurt\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/24%20Chemin%20des%20Bateliers%2044300%20Nantes/Alte%20Mittelhaeuser%20Strasse%2017%2019\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 23/07/2025 - 30/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_413af20ddb2467b46363dbc95d5ebc65 = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_e0120ad833965d1eaa80aac05c90ac72 = $(`<div id="html_e0120ad833965d1eaa80aac05c90ac72" style="width: 100.0%; height: 100.0%;">         <b>Nantes ➜ Erfurt</b><br>         <a href="https://www.google.com/maps/dir/24%20Chemin%20des%20Bateliers%2044300%20Nantes/Alte%20Mittelhaeuser%20Strasse%2017%2019" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 23/07/2025 - 30/07/2025         </div>`)[0];
+                popup_413af20ddb2467b46363dbc95d5ebc65.setContent(html_e0120ad833965d1eaa80aac05c90ac72);
+            
+        
+
+        geo_json_1115b799d760a4430025d47f7e332999.bindPopup(popup_413af20ddb2467b46363dbc95d5ebc65)
+        ;
+
+        
+    
+    
+            geo_json_1115b799d760a4430025d47f7e332999.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+    
+        function geo_json_a3106122d3cc706a35906d7ddc23067b_styler(feature) {
+            switch(feature.properties.popupContent) {
+                default:
+                    return {"color": "blue", "opacity": 1, "weight": 5};
+            }
+        }
+
+        function geo_json_a3106122d3cc706a35906d7ddc23067b_onEachFeature(feature, layer) {
+            layer.on({
+            });
+        };
+        var geo_json_a3106122d3cc706a35906d7ddc23067b = L.geoJson(null, {
+                onEachFeature: geo_json_a3106122d3cc706a35906d7ddc23067b_onEachFeature,
+            
+                style: geo_json_a3106122d3cc706a35906d7ddc23067b_styler,
+        });
+
+        function geo_json_a3106122d3cc706a35906d7ddc23067b_add (data) {
+            geo_json_a3106122d3cc706a35906d7ddc23067b
+                .addData(data);
+        }
+            geo_json_a3106122d3cc706a35906d7ddc23067b_add({"features": [{"geometry": {"coordinates": [[11.077298, 49.453872], [-0.5800364, 44.841225]], "type": "LineString"}, "properties": {"popupContent": "\n        \u003cb\u003eNuremberg \u279c Bordeaux\u003c/b\u003e\u003cbr\u003e\n        \u003ca href=\"https://www.google.com/maps/dir/Benno%20Strauss%20Str%2045/138%20Avenue%20de%20lArgonne%2033700%20Merignac\" target=\"_blank\"\u003eVer ruta en Google Maps\u003c/a\u003e\u003cbr\u003e\n        Fechas: 22/07/2025 - 29/07/2025\n        "}, "type": "Feature"}], "type": "FeatureCollection"});
+
+        
+    
+        var popup_0a3c1e77586cd8527161b8c89787323b = L.popup({"maxWidth": "100%"});
+
+        
+            
+                var html_4b6f9e946a8c3c2ef72da1040d65df00 = $(`<div id="html_4b6f9e946a8c3c2ef72da1040d65df00" style="width: 100.0%; height: 100.0%;">         <b>Nuremberg ➜ Bordeaux</b><br>         <a href="https://www.google.com/maps/dir/Benno%20Strauss%20Str%2045/138%20Avenue%20de%20lArgonne%2033700%20Merignac" target="_blank">Ver ruta en Google Maps</a><br>         Fechas: 22/07/2025 - 29/07/2025         </div>`)[0];
+                popup_0a3c1e77586cd8527161b8c89787323b.setContent(html_4b6f9e946a8c3c2ef72da1040d65df00);
+            
+        
+
+        geo_json_a3106122d3cc706a35906d7ddc23067b.bindPopup(popup_0a3c1e77586cd8527161b8c89787323b)
+        ;
+
+        
+    
+    
+            geo_json_a3106122d3cc706a35906d7ddc23067b.addTo(map_7c6fbbfc0f5146820cc3b274f81921d4);
+        
+</script>
+</html>
