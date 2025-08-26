@@ -7,6 +7,7 @@ import time
 import signal
 import asyncio
 import sys
+import requests
 from datetime import datetime
 from typing import Dict, List, Set
 from pathlib import Path
@@ -17,20 +18,46 @@ import os
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
 from gui import RouteMapGenerator
 from data_fetcher import StationDataFetcher
+import requests
+
 
 load_dotenv()
-
-
 DEBUG_MODE = False
 
+class TelegramLogHandler(logging.Handler):
+    def __init__(self, bot_token: str, chat_id: str):
+        """
+        Custom logging handler to send log messages to a Telegram chat.
+
+        :param bot_token: Telegram bot token.
+        :param chat_id: Chat ID where logs will be sent.
+        """
+        super().__init__()
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    def emit(self, record):
+        """
+        Sends a log message to the specified Telegram chat.
+        """
+        try:
+            log_entry = self.format(record)
+            payload = {"chat_id": self.chat_id, "text": log_entry}
+            requests.post(self.api_url, json=payload)
+        except Exception as e:
+            print(f"Failed to send log to Telegram: {e}")
+            
+
 class RoadsurferBot:
-    def __init__(self, token: str):
+    def __init__(self, token: str, logger_token: str = None):
         self.token = token
+        self.logger_token = logger_token
         self.db_path = Path("station_routes.json")
         self.favorites_path = Path("user_favorites.json")
         self.notification_history_path = Path("notification_history.json")
         self.assets_folder = Path("assets")
-        self.update_cooldown = 30 * 60  # 30 minutes in seconds
+        self.update_cooldown = 5 * 60  # 30 minutes in seconds
         self.trigger_update_cooldown = 5 * 60 # 5 minutes in seconds
         self.last_update_time = 0
         
@@ -340,27 +367,10 @@ class RoadsurferBot:
 
 
     async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE, is_origin: bool = True) -> None:
-        """Send notification to user about new routes"""
+        """Send notification to user about new routes using the same format as show_routes"""
         try:
-            if is_origin:
-                message = f"🔔 ¡Nueva ruta disponible desde tu estación favorita {station['origin']}!\n\n"
-                # For origin notifications, use the standard format
-                msg_output, image_path = self.format_station_html(station)
-                message += msg_output
-            else:
-                # For destination notifications, we know there's exactly one matching destination
-                dest = station['returns'][0]['destination']
-                message = f"🔔 ¡Nueva ruta disponible hacia tu estación favorita {dest}!\n\n"
-                message += f"📦 <b>Origen</b>: <b>{station['origin']}</b>\n"
-                message += f"🔁 <b>Destino</b>: <b>{dest}</b>\n"
-                for d in station['returns'][0]['available_dates']:
-                    message += f"📅 <code>{d['startDate']} → {d['endDate']}</code>\n"
-
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=message,
-                parse_mode=ParseMode.HTML
-            )
+            msg, image_path = self.format_station_html(station)
+            await self.send_jpeg_file(update=None, context=context, image_path=image_path, msg=msg, user_id=user_id)
         except Exception as e:
             self.logger.error(f"Error sending notification to {user_id}: {e}")
 
@@ -547,22 +557,36 @@ class RoadsurferBot:
             
         self.logger.info(f"Sent interactive map to user {update.effective_user.first_name} (ID: {update.effective_user.id})")
         
-    async def send_jpeg_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE, image_path: str, msg: str) -> None:
-        """Send the JPEG image of the map"""
-        # Get the appropriate message object based on update type
-        message = update.message or update.callback_query.message
-        
+    async def send_jpeg_file(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, image_path: str = "", msg: str = "", user_id: str = None) -> None:
+        """Send the JPEG image of the map, either as a reply (when update is present) or directly to a user_id"""
         try:
-            
             with open(image_path, "rb") as f:
-                await message.reply_photo(
-                    photo=InputFile(f, filename="image_path", ),
-                    caption= msg,
-                    parse_mode=ParseMode.HTML
-                )
+                if update is not None:
+                    message = update.message or update.callback_query.message
+                    await message.reply_photo(
+                        photo=InputFile(f, filename="image_path"),
+                        caption=msg,
+                        parse_mode=ParseMode.HTML
+                    )
+                elif user_id is not None:
+                    await context.bot.send_photo(
+                        chat_id=user_id,
+                        photo=InputFile(f, filename="image_path"),
+                        caption=msg,
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    self.logger.error("send_jpeg_file called without update or user_id.")
         except Exception as e:
             self.logger.error(f"Error sending JPEG file: {e}")
-            await message.reply_text("❌ Error al enviar la imagen.")
+            try:
+                if update is not None:
+                    message = update.message or update.callback_query.message
+                    await message.reply_text("❌ Error al enviar la imagen.")
+                elif user_id is not None:
+                    await context.bot.send_message(chat_id=user_id, text="❌ Error al enviar la imagen.")
+            except Exception as e2:
+                self.logger.error(f"Error sending fallback error message: {e2}")
 
         
     async def check_last_update_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -750,6 +774,7 @@ class RoadsurferBot:
                 lines.append(f"📅 <code>{d['startDate']} → {d['endDate']}</code>")
             
             lines.append(f"🚐{ret.get('model_name', 'Modelo desconocido')}")
+            lines.append(f"🌐 <a href='{ret.get('roadsurfer_url', '#')}'>Ver en Roadsurfer</a>")
             image_path = os.path.join(self.assets_folder, ret.get("model_image"))
             
         
@@ -767,8 +792,6 @@ class RoadsurferBot:
                         
             # Process stations
             async def progress_callback(percent):
-                if percent % 25 == 0:
-                    self.logger.info(f"\rAuto-update progress: {percent}%")
                 print(f"\rAuto-update progress: {percent}%", end="")
 
             
@@ -860,11 +883,14 @@ if __name__ == "__main__":
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("telegram.ext").setLevel(logging.INFO)
     BOT_TOKEN = os.getenv("BOT_TOKEN")
+    LOGGER_TOKEN = os.getenv("LOGGER_TOKEN")
+    TELEGRAM_LOG_CHAT_ID = os.getenv("LOGGER_CHAT_ID")
 
     if not BOT_TOKEN:
         raise ValueError("BOT_TOKEN not found in environment variables")
 
-    bot = RoadsurferBot(BOT_TOKEN)
+    
+    bot = RoadsurferBot(BOT_TOKEN, LOGGER_TOKEN)
 
     # Register the SIGINT handler for graceful shutdown
     signal.signal(signal.SIGINT, lambda signal_received, frame: handle_sigint(bot))

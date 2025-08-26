@@ -1,109 +1,20 @@
 [
     {
-        "origin": "Aix Marseille",
-        "origin_address": "5110 D6 13480 Cabriès",
+        "origin": "Bordeaux",
+        "origin_address": "138 Avenue de lArgonne 33700 Merignac",
         "returns": [
             {
-                "destination": "Regensburg",
-                "destination_address": "Berliner Strasse 41a",
+                "destination": "Marburg",
+                "destination_address": "Affoellerstrasse 90B",
                 "available_dates": [
                     {
-                        "startDate": "23/07/2025",
-                        "endDate": "30/07/2025"
+                        "startDate": "01/09/2025",
+                        "endDate": "08/09/2025"
                     }
                 ],
-                "model_name": "Camper Castle",
-                "model_image": "phpiAEDLE.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Barcelona",
-        "origin_address": "Carrer d´Andorra 65 Local 2 08840 Viladecans",
-        "returns": [
-            {
-                "destination": "Duisburg",
-                "destination_address": "Forststr 36",
-                "available_dates": [
-                    {
-                        "startDate": "22/07/2025",
-                        "endDate": "29/07/2025"
-                    }
-                ],
-                "model_name": "Cozy Cottage",
-                "model_image": "phphhaNpf.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Bilbao",
-        "origin_address": "Poligono Ugaldeguren 3 Parcela 18 1 Elemento 2",
-        "returns": [
-            {
-                "destination": "Lindau Wangen",
-                "destination_address": "Ebnetstrasse 31",
-                "available_dates": [
-                    {
-                        "startDate": "22/07/2025",
-                        "endDate": "29/07/2025"
-                    }
-                ],
-                "model_name": "Camper Castle",
-                "model_image": "phpiAEDLE.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Duisburg",
-        "origin_address": "Forststr 36",
-        "returns": [
-            {
-                "destination": "Paris Airport CDG",
-                "destination_address": "2 rue Gustave Eiffel",
-                "available_dates": [
-                    {
-                        "startDate": "23/07/2025",
-                        "endDate": "30/07/2025"
-                    }
-                ],
-                "model_name": "Road House",
-                "model_image": "phpMFALOL.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Karlsruhe",
-        "origin_address": "Nobelstr 16 16a",
-        "returns": [
-            {
-                "destination": "Nantes",
-                "destination_address": "24 Chemin des Bateliers 44300 Nantes",
-                "available_dates": [
-                    {
-                        "startDate": "22/07/2025",
-                        "endDate": "29/07/2025"
-                    }
-                ],
-                "model_name": "Beach Hostel",
-                "model_image": "phpGonHeh.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Lyon",
-        "origin_address": "1201 Avenue des Pre Seigneurs 01120 Dagneux",
-        "returns": [
-            {
-                "destination": "Erfurt",
-                "destination_address": "Alte Mittelhaeuser Strasse 17 19",
-                "available_dates": [
-                    {
-                        "startDate": "22/07/2025",
-                        "endDate": "29/07/2025"
-                    }
-                ],
-                "model_name": "Road House",
-                "model_image": "phpMFALOL.jpeg"
+                "model_name": "Surfer Suite",
+                "model_image": "phpplLlfn.jpeg",
+                "roadsurfer_url": "https://booking.roadsurfer.com/en/rally/pick?station=13&endStation=22&pickup_date=2025-09-01&return_date=2025-09-08&currency=EUR"
             }
         ]
     },
@@ -112,100 +23,55 @@
         "origin_address": "Calle Mir 10",
         "returns": [
             {
-                "destination": "Constance Aach",
-                "destination_address": "Im Aachtal 1a 78267 Aach",
+                "destination": "Ulm",
+                "destination_address": "Zeppelinstrasse 22",
                 "available_dates": [
                     {
-                        "startDate": "23/07/2025",
-                        "endDate": "30/07/2025"
+                        "startDate": "12/09/2025",
+                        "endDate": "19/09/2025"
                     }
                 ],
-                "model_name": "Camper Castle",
-                "model_image": "phpiAEDLE.jpeg"
+                "model_name": "Surfer Suite",
+                "model_image": "phpplLlfn.jpeg",
+                "roadsurfer_url": "https://booking.roadsurfer.com/en/rally/pick?station=20&endStation=112&pickup_date=2025-09-12&return_date=2025-09-19&currency=EUR"
             }
         ]
     },
     {
-        "origin": "Malaga",
-        "origin_address": "Calle Jose Calderon 120",
+        "origin": "Toulouse",
+        "origin_address": "30 Rue du Rempart 31140 Saint Alban",
         "returns": [
             {
-                "destination": "Regensburg",
-                "destination_address": "Berliner Strasse 41a",
+                "destination": "Lindau Wangen",
+                "destination_address": "Ebnetstrasse 31",
                 "available_dates": [
                     {
-                        "startDate": "24/07/2025",
-                        "endDate": "31/07/2025"
+                        "startDate": "11/09/2025",
+                        "endDate": "18/09/2025"
                     }
                 ],
-                "model_name": "Road House",
-                "model_image": "phpMFALOL.jpeg"
+                "model_name": "Surfer Suite",
+                "model_image": "phpplLlfn.jpeg",
+                "roadsurfer_url": "https://booking.roadsurfer.com/en/rally/pick?station=30&endStation=117&pickup_date=2025-09-11&return_date=2025-09-18&currency=EUR"
             }
         ]
     },
     {
-        "origin": "Munich",
-        "origin_address": "Ingolstaedterstr 172",
+        "origin": "Turin",
+        "origin_address": "Via Giulio Natta 6",
         "returns": [
             {
-                "destination": "Barcelona",
-                "destination_address": "Carrer d´Andorra 65 Local 2 08840 Viladecans",
+                "destination": "Kassel",
+                "destination_address": "Leipziger Str 317b",
                 "available_dates": [
                     {
-                        "startDate": "24/07/2025",
-                        "endDate": "31/07/2025"
+                        "startDate": "11/09/2025",
+                        "endDate": "18/09/2025"
                     }
                 ],
-                "model_name": "Road House",
-                "model_image": "phpMFALOL.jpeg"
-            },
-            {
-                "destination": "Valencia",
-                "destination_address": "C N 2 Parcela 16 46220 Picassent Valencia",
-                "available_dates": [
-                    {
-                        "startDate": "24/07/2025",
-                        "endDate": "31/07/2025"
-                    }
-                ],
-                "model_name": "Road House",
-                "model_image": "phpMFALOL.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Nantes",
-        "origin_address": "24 Chemin des Bateliers 44300 Nantes",
-        "returns": [
-            {
-                "destination": "Erfurt",
-                "destination_address": "Alte Mittelhaeuser Strasse 17 19",
-                "available_dates": [
-                    {
-                        "startDate": "23/07/2025",
-                        "endDate": "30/07/2025"
-                    }
-                ],
-                "model_name": "Beach Hostel",
-                "model_image": "phpGonHeh.jpeg"
-            }
-        ]
-    },
-    {
-        "origin": "Nuremberg",
-        "origin_address": "Benno Strauss Str 45",
-        "returns": [
-            {
-                "destination": "Bordeaux",
-                "destination_address": "138 Avenue de lArgonne 33700 Merignac",
-                "available_dates": [
-                    {
-                        "startDate": "22/07/2025",
-                        "endDate": "29/07/2025"
-                    }
-                ],
-                "model_name": "Couple Cottage",
-                "model_image": "phpBJKKBh.jpeg"
+                "model_name": "Surfer Suite",
+                "model_image": "phpplLlfn.jpeg",
+                "roadsurfer_url": "https://booking.roadsurfer.com/en/rally/pick?station=58&endStation=92&pickup_date=2025-09-11&return_date=2025-09-18&currency=EUR"
             }
         ]
     }

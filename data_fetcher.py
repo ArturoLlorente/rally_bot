@@ -146,7 +146,7 @@ class StationDataFetcher:
                         "available_dates": dates_output,
                         "model_name": model_name,
                         "model_image": model_image,
-                        "roadsurfer_url": f"https://booking.roadsurfer.com/en/rally/pick?pickup_date={start_date}&return_date={end_date}&currency=EUR&startStation={station_id}&endStation={return_station_id}",
+                        "roadsurfer_url": f"https://booking.roadsurfer.com/en/rally/pick?station={station_id}&endStation={return_station_id}&pickup_date={start_date.strftime('%Y-%m-%d')}&return_date={end_date.strftime('%Y-%m-%d')}&currency=EUR",
                     })
 
 
