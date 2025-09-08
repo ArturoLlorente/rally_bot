@@ -3,5 +3,6 @@
 *pyc
 __pycache__/
 *test*
-station_routes.json
 bot.log
+station_routes.json
+notification_history.json
