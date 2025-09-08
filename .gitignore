@@ -1,0 +1,7 @@
+.rally_env/*
+.env
+*pyc
+__pycache__/
+*test*
+station_routes.json
+bot.log

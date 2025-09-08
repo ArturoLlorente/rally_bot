@@ -1,6 +1,8 @@
 from datetime import datetime
+import os
 import logging
 import json
+import requests
 from typing import Dict, List, Optional
 from json import loads
 from urllib.request import Request, urlopen
@@ -137,7 +139,8 @@ class StationDataFetcher:
                     
                 for camper in camper_data:
                     model_name = camper["model"]["name"]
-                    model_image = camper["model"]["images"][0]['image']["url"].split("/")[-1]
+                    image_path = camper["model"]["images"][0]['image']["url"]
+                    model_image= self.download_image(image_path)
 
                 if dates_output:  # Only add if there are valid dates
                     station_output["returns"].append({
@@ -157,6 +160,28 @@ class StationDataFetcher:
         except Exception as e:
             self.logger.error(f"Error processing station destinations: {e}")
             return False
+
+    def download_image(self, image_url: str) -> str:
+
+        if image_url:
+            filename = image_url.split("/")[-1]
+            filepath = os.path.join("assets", filename)
+
+            # Check if file already exists
+            if os.path.exists(filepath):
+                return filename
+
+            # Download image
+            response = requests.get(image_url, stream=True)
+            if response.status_code == 200:
+                with open(filepath, 'wb') as out_file:
+                    for chunk in response.iter_content(1024):
+                        out_file.write(chunk)
+                return filename
+            else:
+                print(f"Failed to download image from {image_url}")
+                return ""
+        return ""
 
     def get_station_transfer_dates(self, origin_station_id: int, destination_station_id: int) -> list:
         """Get transfer dates between two stations"""
