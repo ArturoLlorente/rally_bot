@@ -57,7 +57,7 @@ class RoadsurferBot:
         self.favorites_path = Path("user_favorites.json")
         self.notification_history_path = Path("notification_history.json")
         self.assets_folder = Path("assets")
-        self.update_cooldown = 5 * 60  # 30 minutes in seconds
+        self.update_cooldown = 15 * 60  # 30 minutes in seconds
         self.trigger_update_cooldown = 5 * 60 # 5 minutes in seconds
         self.last_update_time = 0
         
