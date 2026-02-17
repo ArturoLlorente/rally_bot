@@ -8,11 +8,12 @@ import signal
 import asyncio
 import sys
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
 
 #from api_utils import get_stations_data
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -24,29 +25,29 @@ import requests
 load_dotenv()
 DEBUG_MODE = False
 
-class TelegramLogHandler(logging.Handler):
-    def __init__(self, bot_token: str, chat_id: str):
-        """
-        Custom logging handler to send log messages to a Telegram chat.
-
-        :param bot_token: Telegram bot token.
-        :param chat_id: Chat ID where logs will be sent.
-        """
-        super().__init__()
-        self.bot_token = bot_token
-        self.chat_id = chat_id
-        self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-
-    def emit(self, record):
-        """
-        Sends a log message to the specified Telegram chat.
-        """
-        try:
-            log_entry = self.format(record)
-            payload = {"chat_id": self.chat_id, "text": log_entry}
-            requests.post(self.api_url, json=payload)
-        except Exception as e:
-            print(f"Failed to send log to Telegram: {e}")
+#class TelegramLogHandler(logging.Handler):
+#    def __init__(self, bot_token: str, chat_id: str):
+#        """
+#        Custom logging handler to send log messages to a Telegram chat.
+#
+#        :param bot_token: Telegram bot token.
+#        :param chat_id: Chat ID where logs will be sent.
+#        """
+#        super().__init__()
+#        self.bot_token = bot_token
+#        self.chat_id = chat_id
+#        self.api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+#
+#    def emit(self, record):
+#        """
+#        Sends a log message to the specified Telegram chat.
+#        """
+#        try:
+#            log_entry = self.format(record)
+#            payload = {"chat_id": self.chat_id, "text": log_entry}
+#            requests.post(self.api_url, json=payload)
+#        except Exception as e:
+#            print(f"Failed to send log to Telegram: {e}")
             
 
 class RoadsurferBot:
@@ -56,9 +57,10 @@ class RoadsurferBot:
         self.db_path = Path("station_routes.json")
         self.favorites_path = Path("user_favorites.json")
         self.notification_history_path = Path("notification_history.json")
+        self.date_filters_path = Path("user_date_filters.json")
         self.assets_folder = Path("assets")
-        self.update_cooldown = 15 * 60  # 30 minutes in seconds
-        self.trigger_update_cooldown = 5 * 60 # 5 minutes in seconds
+        self.update_cooldown = 30 * 60  # in seconds
+        self.trigger_update_cooldown = 5 * 60 # in seconds
         self.last_update_time = 0
         
 
@@ -69,6 +71,7 @@ class RoadsurferBot:
         # Load data
         self.stations_with_returns = self._load_stations()
         self.user_favorites = self._load_user_favorites()
+        self.user_date_filters = self._load_date_filters()
         self.notification_history = self._load_notification_history()
         
         # Initialize application with job queue
@@ -125,6 +128,17 @@ class RoadsurferBot:
         except Exception as e:
             self.logger.error(f"Error loading favorites: {e}")
             return {}
+        
+    def _load_date_filters(self) -> Dict[str, Dict[str, str]]:
+        """Load user date filters from JSON file"""
+        try:
+            if self.date_filters_path.exists():
+                with open(self.date_filters_path, 'r') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            self.logger.error(f"Error loading date filters: {e}")
+            return {}
 
     def _load_notification_history(self) -> Dict[str, List[Dict]]:
         """Load notification history from JSON file"""
@@ -146,7 +160,11 @@ class RoadsurferBot:
             BotCommand("favoritos", "⭐ Ver tus estaciones favoritas"),
             BotCommand("agregar_favorito", "➕ Añadir estación favorita"),
             BotCommand("eliminar_favorito", "➖ Eliminar estación favorita"),
+            BotCommand("last_update", "⏰ Ver última actualización de la base de datos"),
+            BotCommand("send_json", "📄 Descargar archivo JSON con todas las rutas"),
             BotCommand("descargar_mapa", "🗺️ Descargar mapa interactivo"),
+            BotCommand("check_new_routes", "🔔 Comprobar nuevas rutas para tus favoritos"),
+            BotCommand("set_date_filter", "🗓️ Configurar filtros de fecha para notificaciones"),
             BotCommand("help", "❓ Mostrar ayuda y comandos disponibles"),
         ]
         try:
@@ -167,6 +185,7 @@ class RoadsurferBot:
         self.application.add_handler(CommandHandler("last_update", self.check_last_update_time))
         self.application.add_handler(CommandHandler("send_json", self.send_json_file))
         self.application.add_handler(CommandHandler("check_new_routes", self._check_deleted_routes))
+        self.application.add_handler(CommandHandler("set_date_filter", self.set_date_filter))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -183,6 +202,7 @@ class RoadsurferBot:
             [InlineKeyboardButton("⭐ Ver favoritos", callback_data="show_favorites")],
             [InlineKeyboardButton("➕ Añadir estación favorita", callback_data="add_favorite")],
             [InlineKeyboardButton("➖ Eliminar estación favorita", callback_data="remove_favorite")],
+            [InlineKeyboardButton("🗓️ Configurar filtros de fecha", callback_data="set_date_filter")],
             [InlineKeyboardButton("🗺️ Descargar mapa interactivo", callback_data="send_html_file")],
             [InlineKeyboardButton("❓ Ayuda", callback_data="help_command")],
         ]
@@ -532,6 +552,106 @@ class RoadsurferBot:
         
         self.logger.info(f"Displayed remove favorite grid for user {update.effective_user.first_name}, (ID: {user_id})")
 
+    async def set_date_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Set date filter using calendar interface"""
+        user_id = str(update.effective_user.id)
+        
+        # First, show options for include/exclude
+        keyboard = [
+            [InlineKeyboardButton("📅 Incluir fechas", callback_data="date_include")],
+            [InlineKeyboardButton("🚫 Excluir fechas", callback_data="date_exclude")],
+            [InlineKeyboardButton("❌ Eliminar filtros", callback_data="date_clear")]
+        ]
+        
+        # Show current filters if they exist
+        current_filters = self.user_date_filters.get(user_id, {})
+        filter_text = "🗓️ Configura los filtros de fecha para las notificaciones.\n\n"
+        
+        if current_filters:
+            filter_text += "Filtros actuales:\n"
+            if 'include' in current_filters:
+                filter_text += f"✅ Incluir: {current_filters['include']['start']} → {current_filters['include']['end']}\n"
+            if 'exclude' in current_filters:
+                filter_text += f"❌ Excluir: {current_filters['exclude']['start']} → {current_filters['exclude']['end']}\n"
+        else:
+            filter_text += "No hay filtros configurados.\n"
+        
+        filter_text += "\nSelecciona una opción:"
+        
+        await update.message.reply_text(
+            filter_text,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    async def handle_date_filter(self, query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle date filter callbacks"""
+        user_id = str(query.from_user.id)
+        action = query.data.replace("date_", "")
+        
+        if action == "clear":
+            if user_id in self.user_date_filters:
+                del self.user_date_filters[user_id]
+                self._save_date_filters()
+                await query.message.edit_text("✅ Filtros de fecha eliminados.")
+            else:
+                await query.message.edit_text("ℹ️ No hay filtros para eliminar.")
+            return
+            
+        if action in ["include", "exclude"]:
+            context.user_data['date_action'] = action
+            context.user_data['date_step'] = 'start'
+            calendar, step = DetailedTelegramCalendar(min_date=datetime.now()).build()
+            await query.message.edit_text(
+                f"Selecciona la fecha de {'inicio' if action == 'include' else 'exclusión'}:",
+                reply_markup=calendar
+            )
+
+    async def handle_calendar_selection(self, query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle calendar date selection"""
+        user_id = str(query.from_user.id)
+        action = context.user_data.get('date_action')
+        step = context.user_data.get('date_step')
+        
+        result, key, step = DetailedTelegramCalendar(min_date=datetime.now()).process(query.data)
+        
+        if not result and key:
+            await query.message.edit_text(
+                f"Selecciona la fecha de {'inicio' if step == 'start' else 'fin'}:",
+                reply_markup=key
+            )
+            return
+        
+        if result:
+            if step == 'start':
+                context.user_data['start_date'] = result
+                context.user_data['date_step'] = 'end'
+                calendar, step = DetailedTelegramCalendar(
+                    min_date=result + timedelta(days=1)
+                ).build()
+                await query.message.edit_text(
+                    "Selecciona la fecha de fin:",
+                    reply_markup=calendar
+                )
+            else:  # end date selected
+                end_date = result
+                start_date = context.user_data['start_date']
+                
+                if user_id not in self.user_date_filters:
+                    self.user_date_filters[user_id] = {}
+                    
+                self.user_date_filters[user_id][action] = {
+                    'start': start_date.strftime('%Y-%m-%d'),
+                    'end': end_date.strftime('%Y-%m-%d')
+                }
+                
+                self._save_date_filters()
+                
+                await query.message.edit_text(
+                    f"✅ Filtro configurado:\n"
+                    f"{'Incluir' if action == 'include' else 'Excluir'} fechas entre:\n"
+                    f"{start_date.strftime('%d/%m/%Y')} → {end_date.strftime('%d/%m/%Y')}"
+                )
+
     async def send_html_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send the interactive map HTML file"""
         # Get the appropriate message object based on update type
@@ -650,7 +770,7 @@ class RoadsurferBot:
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle callback queries from inline keyboard"""
         query = update.callback_query
-        await query.answer()  # Answer the callback query to stop the loading state
+        await query.answer()
 
         try:
             if query.data == "update_database":
@@ -667,6 +787,10 @@ class RoadsurferBot:
                 await self._handle_station_toggle(query, context)
             elif query.data == "save_favorites":
                 await self._handle_save_favorites(query, context)
+            elif query.data.startswith("date_"):
+                await self.handle_date_filter(query, context)
+            elif DetailedTelegramCalendar.is_calendar_callback(query.data):
+                await self.handle_calendar_selection(query, context)
         except Exception as e:
             self.logger.error(f"Error handling callback {query.data}: {e}")
             try:
@@ -843,6 +967,33 @@ class RoadsurferBot:
             self.logger.error(f"Error running bot: {e}", exc_info=True)
             raise
 
+    def _check_date_filters(self, user_id: str, date_str: str) -> bool:
+        """Check if a date passes the user's filters"""
+        if user_id not in self.user_date_filters:
+            return True
+            
+        try:
+            date = datetime.strptime(date_str, "%d/%m/%Y")
+            filters = self.user_date_filters[user_id]
+            
+            # Check exclude filters first
+            if 'exclude' in filters:
+                exclude_start = datetime.strptime(filters['exclude']['start'], '%Y-%m-%d')
+                exclude_end = datetime.strptime(filters['exclude']['end'], '%Y-%m-%d')
+                if exclude_start <= date <= exclude_end:
+                    return False
+                    
+            # Then check include filters
+            if 'include' in filters:
+                include_start = datetime.strptime(filters['include']['start'], '%Y-%m-%d')
+                include_end = datetime.strptime(filters['include']['end'], '%Y-%m-%d')
+                return include_start <= date <= include_end
+                
+            return True
+        except Exception as e:
+            self.logger.error(f"Error checking date filters: {e}")
+            return True
+
 async def initializer_message(bot: RoadsurferBot):
     """Send an initializer message asynchronously."""
     try:
@@ -862,7 +1013,8 @@ async def shutdown_message(bot: RoadsurferBot):
 def handle_sigint(bot: RoadsurferBot):
     """Handle SIGINT signal."""
     async def shutdown_and_exit():
-        await shutdown_message(bot)
+        if not DEBUG_MODE:
+            await shutdown_message(bot)
         sys.exit(0)
 
     loop = asyncio.get_event_loop()
