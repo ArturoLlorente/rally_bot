@@ -3,13 +3,16 @@ import os
 import logging
 import json
 import requests
-from typing import Dict, List, Optional
+import time
+from typing import Dict, List, Optional, Callable, Any
 from json import loads
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 import logging
 from typing import Dict, Optional, Union
 from http.client import HTTPResponse
+from urllib.error import HTTPError
+from tqdm import tqdm
 
 class StationDataFetcher:
     """Class to fetch and process station data from the roadsurfer API"""
@@ -22,10 +25,16 @@ class StationDataFetcher:
         self.stations_data: Dict[int, Dict] = {}
         self.stations_with_returns: List[Dict] = []
         self.output_data: List[Dict] = []
+        self.valid_stations: List[Dict] = []  # Initialize valid stations list
 
         self.url_stations = "https://booking.roadsurfer.com/api/en/rally/stations"
         self.url_timeframes = "https://booking.roadsurfer.com/api/en/rally/timeframes"
         self.url_search = "https://booking.roadsurfer.com/api/es/rally/search"
+        
+        # Rate limiting settings
+        self.request_delay = 0.1  # Delay between requests in seconds
+        self.max_retries = 3  # Maximum number of retries for failed requests
+        self.retry_delay = 5  # Initial retry delay in seconds
         
         self.base_headers = {
             "Accept": "application/json, text/plain, */*",
@@ -64,8 +73,13 @@ class StationDataFetcher:
 
 
 
-    def print_routes_for_stations(self) -> None:
-        """Process and print routes for all stations"""
+    async def print_routes_for_stations(self, route_callback: Optional[Callable[[Dict], Any]] = None) -> None:
+        """Process and print routes for all stations
+        
+        Args:
+            route_callback: Optional async callback function called when a new route is found.
+                           Receives the route data as a dictionary.
+        """
         
         self.output_data = []  # Reset output data
         
@@ -74,17 +88,27 @@ class StationDataFetcher:
             return
 
         try:
-            for station in self.stations_with_returns:
-                if self.validate_station_data(station):
-                    self.process_station_destinations(station)
+            # Add progress bar for processing stations
+            with tqdm(total=len(self.stations_with_returns), desc="Processing stations", unit="station") as pbar:
+                for station in self.stations_with_returns:
+                    if self.validate_station_data(station):
+                        station_name = self.stations_data.get(station.get("id"), {}).get("name", "Unknown")
+                        pbar.set_postfix_str(f"Current: {station_name[:30]}")
+                        await self.process_station_destinations(station, route_callback=route_callback)
+                    pbar.update(1)
 
         except Exception as e:
             self.logger.error(f"Error processing routes for stations: {e}")
             raise
         return self.output_data
 
-    def process_station_destinations(self, station: dict) -> None:
-        """Process destinations for a single station"""
+    async def process_station_destinations(self, station: dict, route_callback: Optional[Callable[[Dict], Any]] = None) -> None:
+        """Process destinations for a single station
+        
+        Args:
+            station: Station data dictionary
+            route_callback: Optional async callback function called when a new route is found
+        """
         try:
             station_id = station.get("id")
 
@@ -109,7 +133,9 @@ class StationDataFetcher:
                 #self.logger.warning(f"No returns found for station {station_id}: {origin_name}")
                 return
 
-            for return_station_id in station["returns"]:
+            # Add progress bar for processing return stations
+            returns_list = station["returns"]
+            for return_station_id in tqdm(returns_list, desc=f"  Routes from {origin_name[:20]}", unit="route", leave=False):
                 if return_station_id not in self.stations_data:
                     self.logger.warning(f"Return station ID {return_station_id} not found in stations_data")
                     continue
@@ -125,32 +151,78 @@ class StationDataFetcher:
                 destination_address = self.cleanup_special_characters(destination_address)
 
                 available_dates = self.get_station_transfer_dates(station_id, return_station_id)
+                
+                # Skip if no available dates
+                if not available_dates:
+                    continue
+                    
                 camper_data = self.get_booking_data(station_id, return_station_id, available_dates)
+                
+                # Skip if no camper data
+                if not camper_data:
+                    continue
 
                 dates_output = []
+                first_start_date = None
+                first_end_date = None
+                
                 for date in available_dates:
                     try:
                         start_date = datetime.strptime(date["startDate"][:10], "%Y-%m-%d")
                         end_date = datetime.strptime(date["endDate"][:10], "%Y-%m-%d")
                         dates_output.append({"startDate": start_date.strftime("%d/%m/%Y"), "endDate": end_date.strftime("%d/%m/%Y")})
+                        
+                        # Store first date for URL
+                        if first_start_date is None:
+                            first_start_date = start_date
+                            first_end_date = end_date
                     except ValueError as e:
                         self.logger.warning(f"Error parsing dates: {e}")
                         continue
-                    
-                for camper in camper_data:
-                    model_name = camper["model"]["name"]
-                    image_path = camper["model"]["images"][0]['image']["url"]
-                    model_image= self.download_image(image_path)
+                
+                # Get model info from first camper if available
+                model_name = "Unknown"
+                model_image = ""
+                if camper_data and len(camper_data) > 0:
+                    try:
+                        camper = camper_data[0]
+                        model_name = camper.get("model", {}).get("name", "Unknown")
+                        images = camper.get("model", {}).get("images", [])
+                        if images and len(images) > 0:
+                            image_path = images[0].get('image', {}).get("url", "")
+                            if image_path:
+                                model_image = self.download_image(image_path)
+                    except Exception as e:
+                        self.logger.warning(f"Error extracting camper data: {e}")
 
-                if dates_output:  # Only add if there are valid dates
-                    station_output["returns"].append({
+                if dates_output and first_start_date and first_end_date:  # Only add if there are valid dates
+                    route_data = {
                         "destination": return_name,
                         "destination_address": destination_address,
                         "available_dates": dates_output,
                         "model_name": model_name,
                         "model_image": model_image,
-                        "roadsurfer_url": f"https://booking.roadsurfer.com/en/rally/pick?station={station_id}&endStation={return_station_id}&pickup_date={start_date.strftime('%Y-%m-%d')}&return_date={end_date.strftime('%Y-%m-%d')}&currency=EUR",
-                    })
+                        "roadsurfer_url": f"https://booking.roadsurfer.com/en/rally/pick?station={station_id}&endStation={return_station_id}&pickup_date={first_start_date.strftime('%Y-%m-%d')}&return_date={first_end_date.strftime('%Y-%m-%d')}&currency=EUR",
+                    }
+                    station_output["returns"].append(route_data)
+                    
+                    # Call the callback if provided (for real-time notifications)
+                    if route_callback:
+                        single_route = {
+                            'origin': origin_name,
+                            'origin_address': origin_address,
+                            'returns': [route_data]
+                        }
+                        try:
+                            # Handle both sync and async callbacks
+                            import inspect
+                            if inspect.iscoroutinefunction(route_callback):
+                                await route_callback(single_route)
+                            else:
+                                # Sync callback
+                                route_callback(single_route)
+                        except Exception as e:
+                            self.logger.error(f"Error in route callback: {e}", exc_info=True)
 
 
 
@@ -233,25 +305,60 @@ class StationDataFetcher:
         
     
     def get_json_from_url(self, url: str, headers: dict) -> Optional[Union[Dict, list]]:
-        """Get JSON data from URL with error handling and validation"""
-        req = Request(url, headers=headers)
+        """Get JSON data from URL with error handling, validation, and retry logic"""
         response: Optional[HTTPResponse] = None
-
-        try:
-            response = urlopen(req)
-            if response.status != 200:
-                self.logger.error(f"HTTP Error: Status {response.status} for URL {url}")
-                return None
-
-            raw_data = response.read().decode()
-            return loads(raw_data)
         
-        except Exception as e:
-            self.logger.error(f"Unexpected error accessing {url}: {str(e)}")
-            return None
-        finally:
-            if response:
-                response.close()
+        for attempt in range(self.max_retries):
+            try:
+                # Add delay between requests to avoid rate limiting
+                if attempt > 0:
+                    # Exponential backoff for retries
+                    wait_time = self.retry_delay * (2 ** (attempt - 1))
+                    self.logger.info(f"Retrying request to {url} (attempt {attempt + 1}/{self.max_retries}) after {wait_time}s")
+                    time.sleep(wait_time)
+                else:
+                    # Normal delay between requests
+                    time.sleep(self.request_delay)
+                
+                req = Request(url, headers=headers)
+                response = urlopen(req)
+                
+                if response.status != 200:
+                    self.logger.error(f"HTTP Error: Status {response.status} for URL {url}")
+                    return None
+
+                raw_data = response.read().decode()
+                return loads(raw_data)
+            
+            except HTTPError as e:
+                if e.code == 429:  # Too Many Requests
+                    if attempt < self.max_retries - 1:
+                        wait_time = self.retry_delay * (2 ** attempt)
+                        self.logger.warning(f"Rate limit hit (429). Waiting {wait_time}s before retry {attempt + 1}/{self.max_retries}")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        self.logger.error(f"Rate limit hit (429) after {self.max_retries} attempts for {url}")
+                        return None
+                else:
+                    self.logger.error(f"HTTP Error {e.code} accessing {url}: {str(e)}")
+                    return None
+            
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"Error accessing {url}: {str(e)}. Retrying in {wait_time}s")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    self.logger.error(f"Unexpected error accessing {url} after {self.max_retries} attempts: {str(e)}")
+                    return None
+            finally:
+                if response:
+                    response.close()
+                    response = None
+        
+        return None
             
             
     def validate_timeframes_response(self, data: list) -> bool:
@@ -288,19 +395,26 @@ class StationDataFetcher:
         total = len(self.valid_stations)
         self.logger.info(f"Processing {total} stations")
 
-        for i, station in enumerate(self.valid_stations):
-            
-            if not self.validate_station_data(station):
-                continue
+        # Add progress bar for fetching station routes
+        with tqdm(total=total, desc="Fetching station routes", unit="station") as pbar:
+            for i, station in enumerate(self.valid_stations):
                 
-            self.stations_data[station["id"]] = station
-            
-            station_data = self.get_station_data(station["id"])
-            self.stations_with_returns.append(station_data)
+                if not self.validate_station_data(station):
+                    pbar.update(1)
+                    continue
+                    
+                self.stations_data[station["id"]] = station
+                station_name = station.get("name", "Unknown")
+                pbar.set_postfix_str(f"Current: {station_name[:30]}")
+                
+                station_data = self.get_station_data(station["id"])
+                self.stations_with_returns.append(station_data)
 
-            if progress_callback:
-                percent = int((i + 1) / total * 100)
-                await progress_callback(percent)
+                if progress_callback:
+                    percent = int((i + 1) / total * 100)
+                    await progress_callback(percent)
+                
+                pbar.update(1)
 
         self.logger.info(f"Successfully processed {len(self.stations_with_returns)} stations with returns")
         return

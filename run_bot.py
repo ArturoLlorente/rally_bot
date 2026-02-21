@@ -13,7 +13,7 @@ from typing import Dict, List, Set
 from pathlib import Path
 from dotenv import load_dotenv
 import os
-from telegram_bot_calendar import DetailedTelegramCalendar, LSTEP
+from telegram_bot_calendar import DetailedTelegramCalendar
 
 #from api_utils import get_stations_data
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
@@ -82,18 +82,17 @@ class RoadsurferBot:
         # Setup handlers
         self._setup_handlers()
         
-        # Setup auto-update job
+        # Setup auto-update job (runs continuously: reschedules itself after each run)
         if self.application.job_queue:
             if DEBUG_MODE:
                 self.logger.info("Skipping auto-update job in debug mode")
             else:
-                self.application.job_queue.run_repeating(
+                self.application.job_queue.run_once(
                     self._job_update_database,
-                    interval=self.update_cooldown,
-                    first=10,
+                    when=10,
                     name='database_update'
                 )
-                self.logger.info("Auto-update job scheduled successfully")
+                self.logger.info("Auto-update job scheduled (continuous mode)")
         else:
             self.logger.error("Job queue not available. Auto-updates will not work.")
             
@@ -129,8 +128,10 @@ class RoadsurferBot:
             self.logger.error(f"Error loading favorites: {e}")
             return {}
         
-    def _load_date_filters(self) -> Dict[str, Dict[str, str]]:
-        """Load user date filters from JSON file"""
+    def _load_date_filters(self) -> Dict[str, List]:
+        """Load user date filters from JSON file.
+        Format: {user_id: [{"start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}, ...]}
+        """
         try:
             if self.date_filters_path.exists():
                 with open(self.date_filters_path, 'r') as f:
@@ -139,6 +140,40 @@ class RoadsurferBot:
         except Exception as e:
             self.logger.error(f"Error loading date filters: {e}")
             return {}
+
+    def _save_date_filters(self) -> None:
+        """Persist user date filters to JSON file"""
+        try:
+            with open(self.date_filters_path, 'w') as f:
+                json.dump(self.user_date_filters, f, indent=4)
+        except Exception as e:
+            self.logger.error(f"Error saving date filters: {e}")
+
+    def _route_passes_date_filter(self, user_id: str, ret: Dict) -> bool:
+        """Return True if the route's dates overlap with any user-configured range.
+        If the user has no filters set, all routes pass."""
+        ranges = self.user_date_filters.get(user_id, [])
+        if not ranges:
+            return True  # No filter → everything passes
+
+        for date_entry in ret.get('available_dates', []):
+            try:
+                route_start = datetime.strptime(date_entry['startDate'], "%d/%m/%Y")
+                route_end   = datetime.strptime(date_entry['endDate'],   "%d/%m/%Y")
+            except (ValueError, KeyError):
+                continue
+
+            for r in ranges:
+                try:
+                    f_start = datetime.strptime(r['start'], "%Y-%m-%d")
+                    f_end   = datetime.strptime(r['end'],   "%Y-%m-%d")
+                except (ValueError, KeyError):
+                    continue
+                # Overlap when route starts before filter ends AND route ends after filter starts
+                if route_start <= f_end and route_end >= f_start:
+                    return True
+
+        return False
 
     def _load_notification_history(self) -> Dict[str, List[Dict]]:
         """Load notification history from JSON file"""
@@ -244,13 +279,26 @@ class RoadsurferBot:
         )
         
         try:
+            # Track last update to avoid duplicate edits
+            last_percent = {'value': -1}
+            
             async def progress_callback(percent):
+                # Only update if percentage changed
+                if percent == last_percent['value']:
+                    return
+                
+                last_percent['value'] = percent
                 progress_text = (
                     f"🔄 Actualizando base de datos de rutas...\n"
                     f"{self.create_progress_bar(percent)}\n"
                     f"Por favor espera..."
                 )
-                await status_message.edit_text(progress_text)
+                try:
+                    await status_message.edit_text(progress_text)
+                except Exception as e:
+                    # Ignore errors when message content hasn't changed
+                    if "Message is not modified" not in str(e):
+                        self.logger.warning(f"Error updating progress message: {e}")
             
             self.data_fetcher.get_stations_data()
             
@@ -258,17 +306,43 @@ class RoadsurferBot:
             if not self.data_fetcher.stations_with_returns:
                 raise Exception("No se encontraron rutas disponibles")
 
+            # Update message to show fetching is complete
+            fetching_complete_message = (
+                "✅ Estaciones obtenidas\n"
+                f"{self.create_progress_bar(100)}\n"
+                "🔍 Procesando rutas y enviando notificaciones..."
+            )
+            try:
+                await status_message.edit_text(fetching_complete_message)
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    self.logger.warning(f"Error updating status message: {e}")
+            
             self.logger.info("Processing routes for stations...")
-            output_data = self.data_fetcher.print_routes_for_stations()
+            self.logger.info(f"Active user favorites: {len(self.user_favorites)} users with favorites")
+            for uid, favs in self.user_favorites.items():
+                self.logger.info(f"  User {uid}: {list(favs)}")
+            
+            # Create callback for real-time notifications as routes are discovered
+            async def route_found_callback(route_data: Dict):
+                """Called when a new route is discovered during scraping"""
+                await self._check_and_notify_route(route_data, context)
+            
+            # Process routes with real-time notifications
+            output_data = await self.data_fetcher.print_routes_for_stations(route_callback=route_found_callback)
             self.stations_with_returns = output_data
                         
             self.data_fetcher.save_output_to_json(self.db_path)
-            await self._check_new_routes(output_data, context)
+            
+            # Check for deleted routes
+            current_stations = self._load_stations()
+            if current_stations:
+                await self._check_deleted_routes(current_stations, context)
             
             self.last_update_time = current_time
             
             final_message = (
-                "✅ Base de datos actualizada\n"
+                "✅ Actualización completada\n"
                 f"{self.create_progress_bar(100)}\n"
                 f"📊 Se encontraron {len(self.stations_with_returns)} estaciones con rutas disponibles."
             )
@@ -320,6 +394,60 @@ class RoadsurferBot:
                 json.dump(self.notification_history, f, indent=4)
         except Exception as e:
             self.logger.error(f"Error saving notification history: {e}")
+
+    async def _check_and_notify_route(self, route: Dict, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Check if a single route matches any user favorites and notify immediately
+        
+        Args:
+            route: Single route data with format {'origin': str, 'origin_address': str, 'returns': [dict]}
+            context: Telegram context for sending messages
+        """
+        try:
+            origin = route.get('origin')
+            if not origin or not route.get('returns'):
+                return
+            
+            self.logger.debug(f"Checking route: {origin} -> {route.get('returns', [{}])[0].get('destination') if route.get('returns') else 'N/A'}")
+            
+            # Check all users for matching favorites
+            for user_id, favorite_stations in self.user_favorites.items():
+                # Check if origin is in favorites
+                if origin in favorite_stations:
+                    # Filter returns by date
+                    filtered_returns = [r for r in route.get('returns', []) if self._route_passes_date_filter(user_id, r)]
+                    if filtered_returns:
+                        filtered_route = {**route, 'returns': filtered_returns}
+                        #self.logger.info(f"Found match! Origin '{origin}' is in favorites for user {user_id}")
+                        if self._is_new_route(user_id, filtered_route):
+                            self.logger.info(f"Sending notification to user {user_id} for new route from {origin}")
+                            await self._notify_user(user_id, filtered_route, context, is_origin=True)
+                            self._mark_route_as_notified(user_id, filtered_route)
+                        else:
+                            self.logger.debug(f"Route from {origin} already notified to user {user_id}")
+                
+                # Check if destination is in favorites
+                for ret in route.get('returns', []):
+                    destination = ret.get('destination')
+                    if destination and destination in favorite_stations:
+                        if not self._route_passes_date_filter(user_id, ret):
+                            self.logger.debug(f"Route to {destination} filtered out by date filter for user {user_id}")
+                            continue
+                        #self.logger.info(f"Found match! Destination '{destination}' is in favorites for user {user_id}")
+                        # Create route data for this specific destination match
+                        dest_route = {
+                            'origin': origin,
+                            'origin_address': route.get('origin_address'),
+                            'returns': [ret]
+                        }
+                        if self._is_new_route(user_id, dest_route):
+                            self.logger.info(f"Sending notification to user {user_id} for new route to {destination}")
+                            await self._notify_user(user_id, dest_route, context, is_origin=False)
+                            self._mark_route_as_notified(user_id, dest_route)
+                        else:
+                            self.logger.debug(f"Route to {destination} already notified to user {user_id}")
+        
+        except Exception as e:
+            self.logger.error(f"Error checking route for notifications: {e}", exc_info=True)
 
     async def _check_new_routes(self, new_stations: List[Dict], context: ContextTypes.DEFAULT_TYPE) -> None:
         """Check for new routes matching users' favorite stations (both as origin and destination)"""
@@ -389,10 +517,13 @@ class RoadsurferBot:
     async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE, is_origin: bool = True) -> None:
         """Send notification to user about new routes using the same format as show_routes"""
         try:
+            self.logger.info(f"Preparing notification for user {user_id}: {station.get('origin')} -> {station.get('returns', [{}])[0].get('destination') if station.get('returns') else 'N/A'}")
             msg, image_path = self.format_station_html(station)
+            self.logger.info(f"Sending photo to user {user_id} with image: {image_path}")
             await self.send_jpeg_file(update=None, context=context, image_path=image_path, msg=msg, user_id=user_id)
+            self.logger.info(f"✅ Successfully sent notification to user {user_id}")
         except Exception as e:
-            self.logger.error(f"Error sending notification to {user_id}: {e}")
+            self.logger.error(f"Error sending notification to {user_id}: {e}", exc_info=True)
 
     async def show_routes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show all available routes"""
@@ -443,7 +574,8 @@ class RoadsurferBot:
         try:
             # Attempt to get stations from the data fetcher
             if self.data_fetcher.valid_stations:
-                all_stations = sorted(self.data_fetcher.valid_stations)
+                # Extract station names from the valid_stations dictionaries
+                all_stations = sorted([station.get('name') for station in self.data_fetcher.valid_stations if station.get('name')])
             else:
                 raise ValueError("No valid stations in data fetcher.")
         except Exception as e:
@@ -553,104 +685,131 @@ class RoadsurferBot:
         self.logger.info(f"Displayed remove favorite grid for user {update.effective_user.first_name}, (ID: {user_id})")
 
     async def set_date_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Set date filter using calendar interface"""
+        """Show the date filter management menu"""
         user_id = str(update.effective_user.id)
-        
-        # First, show options for include/exclude
-        keyboard = [
-            [InlineKeyboardButton("📅 Incluir fechas", callback_data="date_include")],
-            [InlineKeyboardButton("🚫 Excluir fechas", callback_data="date_exclude")],
-            [InlineKeyboardButton("❌ Eliminar filtros", callback_data="date_clear")]
-        ]
-        
-        # Show current filters if they exist
-        current_filters = self.user_date_filters.get(user_id, {})
-        filter_text = "🗓️ Configura los filtros de fecha para las notificaciones.\n\n"
-        
-        if current_filters:
-            filter_text += "Filtros actuales:\n"
-            if 'include' in current_filters:
-                filter_text += f"✅ Incluir: {current_filters['include']['start']} → {current_filters['include']['end']}\n"
-            if 'exclude' in current_filters:
-                filter_text += f"❌ Excluir: {current_filters['exclude']['start']} → {current_filters['exclude']['end']}\n"
+        if update.callback_query:
+            await self._show_date_filter_menu(update.callback_query.message, user_id, edit=True)
         else:
-            filter_text += "No hay filtros configurados.\n"
+            await self._show_date_filter_menu(update.message, user_id, edit=False)
+
+    async def _show_date_filter_menu(self, message, user_id: str, edit: bool = True) -> None:
+        """Build and send/edit the date filter menu showing all current ranges"""
+        ranges = self.user_date_filters.get(user_id, [])
         
-        filter_text += "\nSelecciona una opción:"
+        text = "🗓️ <b>Filtros de fecha para notificaciones</b>\n"
+        text += "Solo recibirás notificaciones de rutas cuyas fechas coincidan con algún rango.\n"
         
-        await update.message.reply_text(
-            filter_text,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard = []
+        
+        if ranges:
+            text += "\n<b>Rangos activos:</b>\n"
+            for i, r in enumerate(ranges):
+                try:
+                    start_display = datetime.strptime(r['start'], "%Y-%m-%d").strftime("%d/%m/%Y")
+                    end_display   = datetime.strptime(r['end'],   "%Y-%m-%d").strftime("%d/%m/%Y")
+                except (ValueError, KeyError):
+                    start_display, end_display = r.get('start', '?'), r.get('end', '?')
+                text += f"  {i+1}. {start_display} → {end_display}\n"
+                keyboard.append([
+                    InlineKeyboardButton(f"🗑️ Eliminar {start_display} → {end_display}", callback_data=f"date_delete_{i}")
+                ])
+            keyboard.append([InlineKeyboardButton("❌ Eliminar todos", callback_data="date_clear")])
+        else:
+            text += "\n<i>Sin filtros — recibirás notificaciones de todas las fechas.</i>\n"
+        
+        keyboard.append([InlineKeyboardButton("➕ Añadir rango", callback_data="date_add")])
+        
+        markup = InlineKeyboardMarkup(keyboard)
+        if edit:
+            await message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+        else:
+            await message.reply_text(text, reply_markup=markup, parse_mode="HTML")
 
     async def handle_date_filter(self, query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle date filter callbacks"""
+        """Handle date filter callbacks (date_add, date_clear, date_delete_N)"""
         user_id = str(query.from_user.id)
-        action = query.data.replace("date_", "")
-        
-        if action == "clear":
-            if user_id in self.user_date_filters:
-                del self.user_date_filters[user_id]
-                self._save_date_filters()
-                await query.message.edit_text("✅ Filtros de fecha eliminados.")
-            else:
-                await query.message.edit_text("ℹ️ No hay filtros para eliminar.")
+        action = query.data  # e.g. "date_add", "date_clear", "date_delete_0"
+
+        if action == "date_clear":
+            self.user_date_filters.pop(user_id, None)
+            self._save_date_filters()
+            await self._show_date_filter_menu(query.message, user_id, edit=True)
             return
-            
-        if action in ["include", "exclude"]:
-            context.user_data['date_action'] = action
+
+        if action.startswith("date_delete_"):
+            try:
+                idx = int(action.split("_")[-1])
+                ranges = self.user_date_filters.get(user_id, [])
+                if 0 <= idx < len(ranges):
+                    ranges.pop(idx)
+                    if ranges:
+                        self.user_date_filters[user_id] = ranges
+                    else:
+                        self.user_date_filters.pop(user_id, None)
+                    self._save_date_filters()
+            except (ValueError, IndexError):
+                pass
+            await self._show_date_filter_menu(query.message, user_id, edit=True)
+            return
+
+        if action == "date_add":
+            # Kick off start-date calendar
             context.user_data['date_step'] = 'start'
-            calendar, step = DetailedTelegramCalendar(min_date=datetime.now()).build()
+            context.user_data.pop('date_start', None)
+            calendar, _ = DetailedTelegramCalendar(min_date=datetime.now().date()).build()
             await query.message.edit_text(
-                f"Selecciona la fecha de {'inicio' if action == 'include' else 'exclusión'}:",
-                reply_markup=calendar
+                "📅 Selecciona la <b>fecha de inicio</b> del rango:",
+                reply_markup=calendar,
+                parse_mode="HTML"
             )
 
     async def handle_calendar_selection(self, query: CallbackQuery, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle calendar date selection"""
+        """Handle calendar date selection for date-range building"""
         user_id = str(query.from_user.id)
-        action = context.user_data.get('date_action')
-        step = context.user_data.get('date_step')
-        
-        result, key, step = DetailedTelegramCalendar(min_date=datetime.now()).process(query.data)
-        
+        step = context.user_data.get('date_step', 'start')
+
+        result, key, _ = DetailedTelegramCalendar(min_date=datetime.now().date()).process(query.data)
+
         if not result and key:
+            # Still navigating the calendar
+            label = "inicio" if step == 'start' else "fin"
             await query.message.edit_text(
-                f"Selecciona la fecha de {'inicio' if step == 'start' else 'fin'}:",
-                reply_markup=key
+                f"📅 Selecciona la <b>fecha de {label}</b> del rango:",
+                reply_markup=key,
+                parse_mode="HTML"
             )
             return
-        
+
         if result:
             if step == 'start':
-                context.user_data['start_date'] = result
+                context.user_data['date_start'] = result
                 context.user_data['date_step'] = 'end'
-                calendar, step = DetailedTelegramCalendar(
+                calendar, _ = DetailedTelegramCalendar(
                     min_date=result + timedelta(days=1)
                 ).build()
                 await query.message.edit_text(
-                    "Selecciona la fecha de fin:",
-                    reply_markup=calendar
+                    f"📅 Inicio: <b>{result.strftime('%d/%m/%Y')}</b>\nAhora selecciona la <b>fecha de fin</b>:",
+                    reply_markup=calendar,
+                    parse_mode="HTML"
                 )
-            else:  # end date selected
+            else:  # step == 'end'
+                start_date = context.user_data.get('date_start')
                 end_date = result
-                start_date = context.user_data['start_date']
                 
-                if user_id not in self.user_date_filters:
-                    self.user_date_filters[user_id] = {}
-                    
-                self.user_date_filters[user_id][action] = {
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
-                }
+                if start_date:
+                    if user_id not in self.user_date_filters:
+                        self.user_date_filters[user_id] = []
+                    self.user_date_filters[user_id].append({
+                        'start': start_date.strftime('%Y-%m-%d'),
+                        'end': end_date.strftime('%Y-%m-%d')
+                    })
+                    self._save_date_filters()
                 
-                self._save_date_filters()
+                # Clean up temp data
+                context.user_data.pop('date_step', None)
+                context.user_data.pop('date_start', None)
                 
-                await query.message.edit_text(
-                    f"✅ Filtro configurado:\n"
-                    f"{'Incluir' if action == 'include' else 'Excluir'} fechas entre:\n"
-                    f"{start_date.strftime('%d/%m/%Y')} → {end_date.strftime('%d/%m/%Y')}"
-                )
+                await self._show_date_filter_menu(query.message, user_id, edit=True)
 
     async def send_html_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send the interactive map HTML file"""
@@ -679,34 +838,47 @@ class RoadsurferBot:
         
     async def send_jpeg_file(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, image_path: str = "", msg: str = "", user_id: str = None) -> None:
         """Send the JPEG image of the map, either as a reply (when update is present) or directly to a user_id"""
+        has_image = image_path and os.path.isfile(image_path)
         try:
-            with open(image_path, "rb") as f:
+            if has_image:
+                with open(image_path, "rb") as f:
+                    if update is not None:
+                        message = update.message or update.callback_query.message
+                        await message.reply_photo(
+                            photo=InputFile(f, filename="image_path"),
+                            caption=msg,
+                            parse_mode=ParseMode.HTML
+                        )
+                    elif user_id is not None:
+                        await context.bot.send_photo(
+                            chat_id=user_id,
+                            photo=InputFile(f, filename="image_path"),
+                            caption=msg,
+                            parse_mode=ParseMode.HTML
+                        )
+                    else:
+                        self.logger.error("send_jpeg_file called without update or user_id.")
+            else:
+                # No valid image — send text only
+                if image_path:
+                    self.logger.warning(f"Image file not found, sending text only: {image_path}")
                 if update is not None:
                     message = update.message or update.callback_query.message
-                    await message.reply_photo(
-                        photo=InputFile(f, filename="image_path"),
-                        caption=msg,
-                        parse_mode=ParseMode.HTML
-                    )
+                    await message.reply_text(msg, parse_mode=ParseMode.HTML)
                 elif user_id is not None:
-                    await context.bot.send_photo(
-                        chat_id=user_id,
-                        photo=InputFile(f, filename="image_path"),
-                        caption=msg,
-                        parse_mode=ParseMode.HTML
-                    )
+                    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
                 else:
                     self.logger.error("send_jpeg_file called without update or user_id.")
         except Exception as e:
-            self.logger.error(f"Error sending JPEG file: {e}")
+            self.logger.error(f"Error sending message: {e}")
             try:
                 if update is not None:
                     message = update.message or update.callback_query.message
-                    await message.reply_text("❌ Error al enviar la imagen.")
+                    await message.reply_text(msg, parse_mode=ParseMode.HTML)
                 elif user_id is not None:
-                    await context.bot.send_message(chat_id=user_id, text="❌ Error al enviar la imagen.")
+                    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
             except Exception as e2:
-                self.logger.error(f"Error sending fallback error message: {e2}")
+                self.logger.error(f"Error sending fallback message: {e2}")
 
         
     async def check_last_update_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -787,9 +959,11 @@ class RoadsurferBot:
                 await self._handle_station_toggle(query, context)
             elif query.data == "save_favorites":
                 await self._handle_save_favorites(query, context)
+            elif query.data == "set_date_filter":
+                await self.set_date_filter(update, context)
             elif query.data.startswith("date_"):
                 await self.handle_date_filter(query, context)
-            elif DetailedTelegramCalendar.is_calendar_callback(query.data):
+            elif query.data.startswith("cbcal_"):
                 await self.handle_calendar_selection(query, context)
         except Exception as e:
             self.logger.error(f"Error handling callback {query.data}: {e}")
@@ -891,6 +1065,7 @@ class RoadsurferBot:
     def format_station_html(self, station: dict) -> str:
         """Format station information as HTML"""
         lines = [f"📦 <b>Origen</b>: <b>{station['origin']}</b>"]
+        image_path = ""
         
         for ret in station.get("returns", []):
             lines.append(f"🔁 <b>Destino</b>: <b>{ret['destination']}</b>")
@@ -899,7 +1074,9 @@ class RoadsurferBot:
             
             lines.append(f"🚐{ret.get('model_name', 'Modelo desconocido')}")
             lines.append(f"🌐 <a href='{ret.get('roadsurfer_url', '#')}'>Ver en Roadsurfer</a>")
-            image_path = os.path.join(self.assets_folder, ret.get("model_image"))
+            model_image = ret.get("model_image", "")
+            if model_image:
+                image_path = os.path.join(self.assets_folder, model_image)
             
         
         return "\n".join(lines), image_path
@@ -914,17 +1091,27 @@ class RoadsurferBot:
             # Get new data
             self.data_fetcher.get_stations_data()
                         
-            # Process stations
+            # Process stations with progress tracking
+            last_percent = {'value': -1}
+            
             async def progress_callback(percent):
-                print(f"\rAuto-update progress: {percent}%", end="")
+                # Only update if percentage changed
+                if percent != last_percent['value']:
+                    last_percent['value'] = percent
+                    print(f"\rAuto-update progress: {percent}%", end="")
 
             
             await self.data_fetcher.get_stations_with_returns(progress_callback)
             if not self.data_fetcher.stations_with_returns:
                 raise Exception("No se encontraron rutas disponibles")
             
-            # Process and save routes
-            output_data = self.data_fetcher.print_routes_for_stations()
+            # Create callback for real-time notifications as routes are discovered
+            async def route_found_callback(route_data: Dict):
+                """Called when a new route is discovered during scraping"""
+                await self._check_and_notify_route(route_data, context)
+            
+            # Process and save routes with real-time notifications
+            output_data = await self.data_fetcher.print_routes_for_stations(route_callback=route_found_callback)
             # Update stations data
             self.stations_with_returns = output_data
             
@@ -939,13 +1126,24 @@ class RoadsurferBot:
                 f" Se encontraron {len(self.stations_with_returns)} estaciones con rutas disponibles."
             )
             
-            # Check for new routes and notify users
-            await self._check_new_routes(output_data, context)
-            
+            # Note: Individual notifications are now sent in real-time via the callback
+            # We still check for deleted routes at the end
+            current_stations = self._load_stations()
+            if current_stations:
+                await self._check_deleted_routes(current_stations, context)
             
             
         except Exception as e:
             self.logger.error(f"Error in auto-update job: {e}", exc_info=True)
+        finally:
+            # Reschedule immediately after completion (continuous loop)
+            if context.job_queue and not DEBUG_MODE:
+                context.job_queue.run_once(
+                    self._job_update_database,
+                    when=5,
+                    name='database_update'
+                )
+                self.logger.info("Next database update scheduled in 5 seconds")
             
     async def notify_all_users(self, message: str):
         """Send a message to all users in user_favorites"""
