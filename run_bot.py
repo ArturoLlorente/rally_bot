@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, BotCommand, CallbackQuery
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
@@ -1270,7 +1271,12 @@ if __name__ == "__main__":
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
-            logging.FileHandler('bot.log', encoding='utf-8')
+            RotatingFileHandler(
+                'bot.log',
+                encoding='utf-8',
+                maxBytes=1 * 1024 * 1024,  # 1 MB per file
+                backupCount=2,             # keep bot.log + 2 rotated backups
+            ),
         ]
     )
 
