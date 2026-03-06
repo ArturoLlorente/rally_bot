@@ -6,6 +6,7 @@ import json
 import time
 import signal
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import requests
 from datetime import datetime, timedelta
@@ -24,6 +25,15 @@ import requests
 
 load_dotenv()
 DEBUG_MODE = False
+
+
+async def _safe_edit(message, text: str) -> None:
+    """Edit a Telegram message, silently ignoring 'not modified' errors."""
+    try:
+        await message.edit_text(text)
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            pass  # swallow other transient errors from background thread dispatches
 
 #class TelegramLogHandler(logging.Handler):
 #    def __init__(self, bot_token: str, chat_id: str):
@@ -62,6 +72,12 @@ class RoadsurferBot:
         self.update_cooldown = 30 * 60  # in seconds
         self.trigger_update_cooldown = 5 * 60 # in seconds
         self.last_update_time = 0
+
+        # Thread pool (1 worker so only one DB update runs at a time)
+        self._update_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='db_update')
+        # asyncio lock – prevents a manual trigger overlapping the auto-update
+        self._update_lock = asyncio.Lock()
+        self._is_updating = False
         
 
         self.logger = logging.getLogger(__name__)
@@ -264,6 +280,15 @@ class RoadsurferBot:
         
         self.logger.info((f"Recibido request para actualizar rutas por el usuario"
                           f" {update.effective_user.first_name}, (ID: {update.effective_user.id})"))
+
+        # If a background update is already running, just inform the user
+        if self._is_updating:
+            await message.reply_text(
+                "🔄 La base de datos se está actualizando en segundo plano ahora mismo.\n"
+                "Recibirás notificaciones en cuanto se descubran nuevas rutas.\n"
+                "Usa /last_update para ver cuándo fue la última actualización completa."
+            )
+            return
         
         if current_time - self.last_update_time < self.trigger_update_cooldown:
             remaining = int((self.trigger_update_cooldown - (current_time - self.last_update_time)) // 60) + 1
@@ -274,88 +299,83 @@ class RoadsurferBot:
             self.logger.info(f"Update request ignored. Last update was {current_time - self.last_update_time} seconds ago.")
             return
 
-        status_message = await message.reply_text(
-            "🔄 Iniciando actualización de rutas...\n" + self.create_progress_bar(0)
-        )
-        
-        try:
-            # Track last update to avoid duplicate edits
-            last_percent = {'value': -1}
-            
-            async def progress_callback(percent):
-                # Only update if percentage changed
-                if percent == last_percent['value']:
-                    return
-                
-                last_percent['value'] = percent
-                progress_text = (
-                    f"🔄 Actualizando base de datos de rutas...\n"
-                    f"{self.create_progress_bar(percent)}\n"
-                    f"Por favor espera..."
-                )
-                try:
-                    await status_message.edit_text(progress_text)
-                except Exception as e:
-                    # Ignore errors when message content hasn't changed
-                    if "Message is not modified" not in str(e):
-                        self.logger.warning(f"Error updating progress message: {e}")
-            
-            self.data_fetcher.get_stations_data()
-            
-            await self.data_fetcher.get_stations_with_returns(progress_callback)
-            if not self.data_fetcher.stations_with_returns:
-                raise Exception("No se encontraron rutas disponibles")
+        async with self._update_lock:
+            self._is_updating = True
+            status_message = await message.reply_text(
+                "🔄 Iniciando actualización de rutas...\n" + self.create_progress_bar(0)
+            )
 
-            # Update message to show fetching is complete
-            fetching_complete_message = (
-                "✅ Estaciones obtenidas\n"
-                f"{self.create_progress_bar(100)}\n"
-                "🔍 Procesando rutas y enviando notificaciones..."
-            )
             try:
-                await status_message.edit_text(fetching_complete_message)
+                loop = asyncio.get_event_loop()
+
+                # ---- Build thread-safe callbacks --------------------------------
+                last_percent = {'value': -1}
+
+                def sync_progress_callback(percent: int):
+                    if percent == last_percent['value']:
+                        return
+                    last_percent['value'] = percent
+                    progress_text = (
+                        f"🔄 Actualizando base de datos de rutas...\n"
+                        f"{self.create_progress_bar(percent)}\n"
+                        f"Por favor espera..."
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        _safe_edit(status_message, progress_text),
+                        loop
+                    )
+
+                def sync_route_callback(route_data: Dict):
+                    asyncio.run_coroutine_threadsafe(
+                        self._check_and_notify_route(route_data, context),
+                        loop
+                    )
+
+                # ---- Run the entire blocking pipeline in the thread pool --------
+                output_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.data_fetcher.sync_full_update(
+                        progress_callback=sync_progress_callback,
+                        route_callback=sync_route_callback,
+                    )
+                )
+
+                if not output_data:
+                    raise Exception("No se encontraron rutas disponibles")
+
+                # ---- Fetching complete ----------------------------------------
+                try:
+                    await status_message.edit_text(
+                        "✅ Estaciones obtenidas\n"
+                        f"{self.create_progress_bar(100)}\n"
+                        "🔍 Guardando y enviando notificaciones..."
+                    )
+                except Exception:
+                    pass
+
+                self.stations_with_returns = output_data
+                self.data_fetcher.save_output_to_json(self.db_path)
+
+                current_stations = self._load_stations()
+                if current_stations:
+                    await self._check_deleted_routes(current_stations, context)
+
+                self.last_update_time = current_time
+
+                await status_message.edit_text(
+                    "✅ Actualización completada\n"
+                    f"{self.create_progress_bar(100)}\n"
+                    f"📊 Se encontraron {len(self.stations_with_returns)} estaciones con rutas disponibles."
+                )
+
             except Exception as e:
-                if "Message is not modified" not in str(e):
-                    self.logger.warning(f"Error updating status message: {e}")
-            
-            self.logger.info("Processing routes for stations...")
-            self.logger.info(f"Active user favorites: {len(self.user_favorites)} users with favorites")
-            for uid, favs in self.user_favorites.items():
-                self.logger.info(f"  User {uid}: {list(favs)}")
-            
-            # Create callback for real-time notifications as routes are discovered
-            async def route_found_callback(route_data: Dict):
-                """Called when a new route is discovered during scraping"""
-                await self._check_and_notify_route(route_data, context)
-            
-            # Process routes with real-time notifications
-            output_data = await self.data_fetcher.print_routes_for_stations(route_callback=route_found_callback)
-            self.stations_with_returns = output_data
-                        
-            self.data_fetcher.save_output_to_json(self.db_path)
-            
-            # Check for deleted routes
-            current_stations = self._load_stations()
-            if current_stations:
-                await self._check_deleted_routes(current_stations, context)
-            
-            self.last_update_time = current_time
-            
-            final_message = (
-                "✅ Actualización completada\n"
-                f"{self.create_progress_bar(100)}\n"
-                f"📊 Se encontraron {len(self.stations_with_returns)} estaciones con rutas disponibles."
-            )
-            
-            await status_message.edit_text(final_message)
-            
-        except Exception as e:
-            self.logger.error(f"Error updating database: {e}", exc_info=True)
-            error_message = (
-                "❌ Error actualizando la base de datos.\n"
-                "Por favor, intenta de nuevo más tarde."
-            )
-            await status_message.edit_text(error_message)
+                self.logger.error(f"Error updating database: {e}", exc_info=True)
+                await status_message.edit_text(
+                    "❌ Error actualizando la base de datos.\n"
+                    "Por favor, intenta de nuevo más tarde."
+                )
+            finally:
+                self._is_updating = False
 
     def _is_new_route(self, user_id: str, station: Dict) -> bool:
         """Check if this route is new for the user"""
@@ -536,6 +556,12 @@ class RoadsurferBot:
             )
             return
 
+        if self._is_updating:
+            await message.reply_text(
+                "ℹ️ La base de datos se está actualizando en segundo plano. "
+                "Mostrando los datos más recientes disponibles."
+            )
+
         for station in self.stations_with_returns:
             msg, image_path = self.format_station_html(station)
             #await message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -565,6 +591,8 @@ class RoadsurferBot:
     async def add_favorite(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Add stations to favorites using a grid interface"""
         user_id = str(update.effective_user.id)
+        # Support both command and inline-keyboard (callback) invocations
+        reply_message = update.message or update.callback_query.message
         
         # Initialize user favorites if needed
         if user_id not in self.user_favorites:
@@ -586,14 +614,14 @@ class RoadsurferBot:
                     all_stations = sorted(json.load(f).keys())
             except Exception as e2:
                 self.logger.error(f"Error loading geocode cache: {e2}")
-                await update.message.reply_text("❌ Error al cargar la lista de estaciones.")
+                await reply_message.reply_text("❌ Error al cargar la lista de estaciones.")
                 return
 
         # Filter out stations that are already in favorites
         available_stations = [s for s in all_stations if s not in self.user_favorites[user_id]]
 
         if not available_stations:
-            await update.message.reply_text("Ya tienes todas las estaciones en favoritos.")
+            await reply_message.reply_text("Ya tienes todas las estaciones en favoritos.")
             self.logger.info(f"No available stations to add for user {update.effective_user.first_name} (ID: {user_id})")
             return
 
@@ -619,7 +647,7 @@ class RoadsurferBot:
         if 'selection_messages' not in context.bot_data:
             context.bot_data['selection_messages'] = {}
         
-        message = await update.message.reply_text(
+        message = await reply_message.reply_text(
             "Selecciona las estaciones para añadir a favoritos:\n"
             "(Puedes seleccionar varias antes de guardar)",
             reply_markup=reply_markup
@@ -638,9 +666,11 @@ class RoadsurferBot:
     async def remove_favorite(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Remove stations from favorites using a grid interface"""
         user_id = str(update.effective_user.id)
+        # Support both command and inline-keyboard (callback) invocations
+        reply_message = update.message or update.callback_query.message
         
         if user_id not in self.user_favorites or not self.user_favorites[user_id]:
-            await update.message.reply_text(
+            await reply_message.reply_text(
                 "No tienes estaciones favoritas para eliminar."
             )
             return
@@ -668,7 +698,7 @@ class RoadsurferBot:
         if 'selection_messages' not in context.bot_data:
             context.bot_data['selection_messages'] = {}
         
-        message = await update.message.reply_text(
+        message = await reply_message.reply_text(
             "Selecciona las estaciones para eliminar de favoritos:\n"
             "(Puedes seleccionar varias antes de guardar)",
             reply_markup=reply_markup
@@ -951,10 +981,14 @@ class RoadsurferBot:
                 await self.show_routes(update, context)
             elif query.data == "show_favorites":
                 await self.show_favorites(update, context)
-            elif query.data == "descargar_mapa":
+            elif query.data in ("descargar_mapa", "send_html_file"):
                 await self.send_html_file(update, context)
-            elif query.data == "help":
+            elif query.data in ("help", "help_command"):
                 await self.help_command(update, context)
+            elif query.data == "add_favorite":
+                await self.add_favorite(update, context)
+            elif query.data == "remove_favorite":
+                await self.remove_favorite(update, context)
             elif query.data.startswith("toggle_add_") or query.data.startswith("toggle_remove_"):
                 await self._handle_station_toggle(query, context)
             elif query.data == "save_favorites":
@@ -1082,68 +1116,78 @@ class RoadsurferBot:
         return "\n".join(lines), image_path
 
     async def _job_update_database(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Job to automatically update the database"""
-        try:
-            if self.last_update_time == 0:
-                await initializer_message(self)
-            self.logger.info("Starting automatic database update...")
-            
-            # Get new data
-            self.data_fetcher.get_stations_data()
-                        
-            # Process stations with progress tracking
-            last_percent = {'value': -1}
-            
-            async def progress_callback(percent):
-                # Only update if percentage changed
-                if percent != last_percent['value']:
-                    last_percent['value'] = percent
-                    print(f"\rAuto-update progress: {percent}%", end="")
-
-            
-            await self.data_fetcher.get_stations_with_returns(progress_callback)
-            if not self.data_fetcher.stations_with_returns:
-                raise Exception("No se encontraron rutas disponibles")
-            
-            # Create callback for real-time notifications as routes are discovered
-            async def route_found_callback(route_data: Dict):
-                """Called when a new route is discovered during scraping"""
-                await self._check_and_notify_route(route_data, context)
-            
-            # Process and save routes with real-time notifications
-            output_data = await self.data_fetcher.print_routes_for_stations(route_callback=route_found_callback)
-            # Update stations data
-            self.stations_with_returns = output_data
-            
-            
-            self.data_fetcher.save_output_to_json(self.db_path)
-            
-            # Update timestamp
-            self.last_update_time = time.time()
-            
-            self.logger.info(
-                "Base de datos actualizada automaticamente \n"
-                f" Se encontraron {len(self.stations_with_returns)} estaciones con rutas disponibles."
-            )
-            
-            # Note: Individual notifications are now sent in real-time via the callback
-            # We still check for deleted routes at the end
-            current_stations = self._load_stations()
-            if current_stations:
-                await self._check_deleted_routes(current_stations, context)
-            
-            
-        except Exception as e:
-            self.logger.error(f"Error in auto-update job: {e}", exc_info=True)
-        finally:
-            # Reschedule immediately after completion (continuous loop)
+        """Job to automatically update the database – runs the heavy fetching in a
+        background thread so the asyncio event loop (and all other handlers) stay
+        fully responsive during the update."""
+        if self._is_updating:
+            self.logger.info("Auto-update skipped: another update is already in progress.")
+            # Still reschedule so we check again soon
             if context.job_queue and not DEBUG_MODE:
-                context.job_queue.run_once(
-                    self._job_update_database,
-                    when=5,
-                    name='database_update'
+                context.job_queue.run_once(self._job_update_database, when=60, name='database_update')
+            return
+
+        async with self._update_lock:
+            self._is_updating = True
+            try:
+                if self.last_update_time == 0:
+                    await initializer_message(self)
+                self.logger.info("Starting automatic database update (background thread)...")
+
+                loop = asyncio.get_event_loop()
+
+                # ---- Build thread-safe callbacks --------------------------------
+                last_percent = {'value': -1}
+
+                def sync_progress_callback(percent: int):
+                    if percent != last_percent['value']:
+                        last_percent['value'] = percent
+                        print(f"\rAuto-update progress: {percent}%", end="", flush=True)
+
+                def sync_route_callback(route_data: Dict):
+                    """Called from the worker thread; dispatches notification onto the event loop."""
+                    asyncio.run_coroutine_threadsafe(
+                        self._check_and_notify_route(route_data, context),
+                        loop
+                    )
+
+                # ---- Run the entire blocking pipeline in the thread pool --------
+                output_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.data_fetcher.sync_full_update(
+                        progress_callback=sync_progress_callback,
+                        route_callback=sync_route_callback,
+                    )
                 )
-                self.logger.info("Next database update scheduled in 5 seconds")
+
+                if not output_data:
+                    raise Exception("No se encontraron rutas disponibles")
+
+                # ---- Back on the event loop: update shared state ----------------
+                self.stations_with_returns = output_data
+                self.data_fetcher.save_output_to_json(self.db_path)
+                self.last_update_time = time.time()
+
+                self.logger.info(
+                    "Base de datos actualizada automaticamente — "
+                    f"{len(self.stations_with_returns)} estaciones con rutas."
+                )
+
+                current_stations = self._load_stations()
+                if current_stations:
+                    await self._check_deleted_routes(current_stations, context)
+
+            except Exception as e:
+                self.logger.error(f"Error in auto-update job: {e}", exc_info=True)
+            finally:
+                self._is_updating = False
+                # Reschedule immediately after completion (continuous loop)
+                if context.job_queue and not DEBUG_MODE:
+                    context.job_queue.run_once(
+                        self._job_update_database,
+                        when=5,
+                        name='database_update'
+                    )
+                    self.logger.info("Next database update scheduled in 5 seconds")
             
     async def notify_all_users(self, message: str):
         """Send a message to all users in user_favorites"""

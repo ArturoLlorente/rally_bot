@@ -479,3 +479,203 @@ class StationDataFetcher:
         except Exception as e:
             self.logger.error(f"Error saving output to JSON: {e}")
             raise
+
+    # ------------------------------------------------------------------
+    # Synchronous update pipeline
+    # Designed to be executed inside a ThreadPoolExecutor so that all
+    # blocking network calls and time.sleep() calls happen OFF the asyncio
+    # event loop, keeping the Telegram bot fully responsive.
+    # ------------------------------------------------------------------
+
+    def sync_full_update(self, progress_callback=None, route_callback=None) -> List[Dict]:
+        """Run the full station-data update pipeline synchronously.
+
+        Intended to be called from a worker thread via
+        ``loop.run_in_executor(executor, ...)``.
+
+        Args:
+            progress_callback: Optional *synchronous* callable(percent: int)
+                               invoked after each station is fetched.
+            route_callback:    Optional *synchronous* callable(route_data: dict)
+                               invoked each time a new route is discovered.
+                               Use ``functools.partial`` or a closure to forward
+                               results back to the asyncio loop via
+                               ``asyncio.run_coroutine_threadsafe``.
+        Returns:
+            List of processed station/route records (same format as
+            ``output_data``).
+        """
+        # ---- Phase 1: fetch the list of valid stations ---------------
+        self.get_stations_data()
+
+        if not self.valid_stations:
+            self.logger.warning("sync_full_update: no valid stations found")
+            return []
+
+        # ---- Phase 2: fetch per-station route lists ------------------
+        self.stations_with_returns = []
+        total = len(self.valid_stations)
+        self.logger.info(f"sync_full_update: fetching {total} stations")
+
+        with tqdm(total=total, desc="Fetching station routes", unit="station") as pbar:
+            for i, station in enumerate(self.valid_stations):
+                if not self.validate_station_data(station):
+                    pbar.update(1)
+                    continue
+
+                self.stations_data[station["id"]] = station
+                pbar.set_postfix_str(f"Current: {station.get('name', '')[:30]}")
+
+                station_data = self.get_station_data(station["id"])
+                self.stations_with_returns.append(station_data)
+
+                if progress_callback:
+                    try:
+                        progress_callback(int((i + 1) / total * 100))
+                    except Exception:
+                        pass
+
+                pbar.update(1)
+
+        # ---- Phase 3: resolve destinations / dates / camper data -----
+        self.output_data = []
+
+        with tqdm(total=len(self.stations_with_returns), desc="Processing stations", unit="station") as pbar:
+            for station in self.stations_with_returns:
+                if self.validate_station_data(station):
+                    station_name = self.stations_data.get(
+                        station.get("id"), {}
+                    ).get("name", "Unknown")
+                    pbar.set_postfix_str(f"Current: {station_name[:30]}")
+                    self._sync_process_station_destinations(station, route_callback=route_callback)
+                pbar.update(1)
+
+        self.logger.info(
+            f"sync_full_update: finished — {len(self.output_data)} stations with routes"
+        )
+        return self.output_data
+
+    def _sync_process_station_destinations(self, station: dict, route_callback=None) -> bool:
+        """Synchronous counterpart of ``process_station_destinations``.
+
+        Calls *route_callback* synchronously (no ``await``).  When used from
+        a worker thread, the caller is responsible for bridging the result
+        back to the asyncio event loop.
+        """
+        try:
+            station_id = station.get("id")
+
+            if station_id not in self.stations_data:
+                self.logger.warning(f"Station ID {station_id} not found in stations_data")
+                return False
+
+            origin_name = self.cleanup_special_characters(
+                self.stations_data[station_id].get("name")
+            )
+            origin_address = self.cleanup_special_characters(
+                self.stations_data[station_id].get("address")
+            )
+
+            if not origin_name or not origin_address:
+                return False
+
+            station_output = {
+                "origin": origin_name,
+                "origin_address": origin_address,
+                "returns": [],
+            }
+
+            if not station.get("returns"):
+                return False
+
+            for return_station_id in tqdm(
+                station["returns"],
+                desc=f"  Routes from {origin_name[:20]}",
+                unit="route",
+                leave=False,
+            ):
+                if return_station_id not in self.stations_data:
+                    continue
+
+                return_name = self.stations_data[return_station_id].get("name")
+                destination_address = self.stations_data[return_station_id].get("address")
+
+                if not return_name or not destination_address:
+                    continue
+
+                return_name = self.cleanup_special_characters(return_name)
+                destination_address = self.cleanup_special_characters(destination_address)
+
+                available_dates = self.get_station_transfer_dates(station_id, return_station_id)
+                if not available_dates:
+                    continue
+
+                camper_data = self.get_booking_data(station_id, return_station_id, available_dates)
+                if not camper_data:
+                    continue
+
+                dates_output = []
+                first_start_date = None
+                first_end_date = None
+
+                for date in available_dates:
+                    try:
+                        start_date = datetime.strptime(date["startDate"][:10], "%Y-%m-%d")
+                        end_date = datetime.strptime(date["endDate"][:10], "%Y-%m-%d")
+                        dates_output.append({
+                            "startDate": start_date.strftime("%d/%m/%Y"),
+                            "endDate":   end_date.strftime("%d/%m/%Y"),
+                        })
+                        if first_start_date is None:
+                            first_start_date = start_date
+                            first_end_date = end_date
+                    except ValueError:
+                        continue
+
+                model_name = "Unknown"
+                model_image = ""
+                if camper_data:
+                    try:
+                        camper = camper_data[0]
+                        model_name = camper.get("model", {}).get("name", "Unknown")
+                        images = camper.get("model", {}).get("images", [])
+                        if images:
+                            image_url = images[0].get("image", {}).get("url", "")
+                            if image_url:
+                                model_image = self.download_image(image_url)
+                    except Exception as e:
+                        self.logger.warning(f"Error extracting camper data: {e}")
+
+                if dates_output and first_start_date and first_end_date:
+                    route_data = {
+                        "destination": return_name,
+                        "destination_address": destination_address,
+                        "available_dates": dates_output,
+                        "model_name": model_name,
+                        "model_image": model_image,
+                        "roadsurfer_url": (
+                            f"https://booking.roadsurfer.com/en/rally/pick"
+                            f"?station={station_id}&endStation={return_station_id}"
+                            f"&pickup_date={first_start_date.strftime('%Y-%m-%d')}"
+                            f"&return_date={first_end_date.strftime('%Y-%m-%d')}&currency=EUR"
+                        ),
+                    }
+                    station_output["returns"].append(route_data)
+
+                    if route_callback:
+                        single_route = {
+                            "origin": origin_name,
+                            "origin_address": origin_address,
+                            "returns": [route_data],
+                        }
+                        try:
+                            route_callback(single_route)
+                        except Exception as e:
+                            self.logger.error(f"Error in sync route_callback: {e}", exc_info=True)
+
+            self.output_data.append(station_output)
+            return True
+
+        except Exception as e:
+            self.logger.error(f"_sync_process_station_destinations error: {e}")
+            return False
