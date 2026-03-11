@@ -20,7 +20,7 @@ from telegram_bot_calendar import DetailedTelegramCalendar
 #from api_utils import get_stations_data
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
 from gui import RouteMapGenerator
-from data_fetcher import StationDataFetcher
+from data_fetcher import StationDataFetcher, ImoovaDataFetcher, IndieCampersDataFetcher
 import requests
 
 
@@ -84,6 +84,8 @@ class RoadsurferBot:
         self.logger = logging.getLogger(__name__)
         
         self.data_fetcher = StationDataFetcher(self.logger)
+        self.imoova_fetcher = ImoovaDataFetcher(self.logger)
+        self.indie_campers_fetcher = IndieCampersDataFetcher(self.logger)
         
         # Load data
         self.stations_with_returns = self._load_stations()
@@ -207,12 +209,10 @@ class RoadsurferBot:
         """Set up the bot commands in Telegram"""
         commands = [
             BotCommand("start", "🚀 Iniciar el bot"),
-            BotCommand("actualizar_rutas", "🔄 Actualizar base de datos de rutas"),
             BotCommand("ver_rutas", "📊 Ver todas las rutas disponibles"),
             BotCommand("favoritos", "⭐ Ver tus estaciones favoritas"),
             BotCommand("agregar_favorito", "➕ Añadir estación favorita"),
             BotCommand("eliminar_favorito", "➖ Eliminar estación favorita"),
-            BotCommand("last_update", "⏰ Ver última actualización de la base de datos"),
             BotCommand("send_json", "📄 Descargar archivo JSON con todas las rutas"),
             BotCommand("descargar_mapa", "🗺️ Descargar mapa interactivo"),
             BotCommand("check_new_routes", "🔔 Comprobar nuevas rutas para tus favoritos"),
@@ -228,13 +228,11 @@ class RoadsurferBot:
     def _setup_handlers(self) -> None:
         """Set up all command and callback handlers"""
         self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("actualizar_rutas", self.update_database))
         self.application.add_handler(CommandHandler("ver_rutas", self.show_routes))
         self.application.add_handler(CommandHandler("favoritos", self.show_favorites))
         self.application.add_handler(CommandHandler("agregar_favorito", self.add_favorite))
         self.application.add_handler(CommandHandler("eliminar_favorito", self.remove_favorite))
         self.application.add_handler(CommandHandler("descargar_mapa", self.send_html_file))
-        self.application.add_handler(CommandHandler("last_update", self.check_last_update_time))
         self.application.add_handler(CommandHandler("send_json", self.send_json_file))
         self.application.add_handler(CommandHandler("check_new_routes", self._check_deleted_routes))
         self.application.add_handler(CommandHandler("set_date_filter", self.set_date_filter))
@@ -249,8 +247,7 @@ class RoadsurferBot:
         await self._setup_commands()
                 
         keyboard = [
-            [InlineKeyboardButton("🚀 Actualizar base de datos", callback_data="update_database")],
-            [InlineKeyboardButton("📊 Ver todas las rutas", callback_data="show_routes")],
+            [InlineKeyboardButton(" Ver todas las rutas", callback_data="show_routes")],
             [InlineKeyboardButton("⭐ Ver favoritos", callback_data="show_favorites")],
             [InlineKeyboardButton("➕ Añadir estación favorita", callback_data="add_favorite")],
             [InlineKeyboardButton("➖ Eliminar estación favorita", callback_data="remove_favorite")],
@@ -264,7 +261,6 @@ class RoadsurferBot:
             f"¡Bienvenido usuario {update.effective_user.first_name} Bot de Roadsurfer Rally patrocinado \n"
             "por Arturo (@arlloren) the Machine! 🚐\n\n"
             "Aquí puedes:\n"
-            "• Actualizar la base de datos de rutas: \n"
             "• Ver rutas disponibles\n"
             "• Gestionar (Añadir/eliminar/ver) estaciones favoritas\n"
             "• Descargar mapa interactivo con las rutas \n\n"
@@ -287,7 +283,7 @@ class RoadsurferBot:
             await message.reply_text(
                 "🔄 La base de datos se está actualizando en segundo plano ahora mismo.\n"
                 "Recibirás notificaciones en cuanto se descubran nuevas rutas.\n"
-                "Usa /last_update para ver cuándo fue la última actualización completa."
+                "Recibirás notificaciones en cuanto se descubran nuevas rutas."
             )
             return
         
@@ -332,7 +328,45 @@ class RoadsurferBot:
                         loop
                     )
 
-                # ---- Run the entire blocking pipeline in the thread pool --------
+                # ---- Fetch imoova relocations (first) ----
+                try:
+                    await _safe_edit(status_message, "🔄 Obteniendo rutas de Imoova...")
+                except Exception:
+                    pass
+
+                imoova_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.imoova_fetcher.sync_full_update(
+                        route_callback=sync_route_callback,
+                    )
+                )
+
+                # Save after Imoova
+                merged = list(imoova_data or [])
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
+                self.data_fetcher.save_output_to_json(self.db_path)
+
+                # ---- Fetch Indie Campers deals ----
+                try:
+                    await _safe_edit(status_message, "🔄 Obteniendo rutas de Indie Campers...")
+                except Exception:
+                    pass
+
+                indie_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.indie_campers_fetcher.sync_full_update(
+                        route_callback=sync_route_callback,
+                    )
+                )
+
+                # Save after Indie Campers
+                merged = merged + (indie_data or [])
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
+                self.data_fetcher.save_output_to_json(self.db_path)
+
+                # ---- Fetch Roadsurfer routes ----
                 output_data = await loop.run_in_executor(
                     self._update_executor,
                     lambda: self.data_fetcher.sync_full_update(
@@ -341,7 +375,9 @@ class RoadsurferBot:
                     )
                 )
 
-                if not output_data:
+                # Final merge and save
+                merged = merged + (output_data or [])
+                if not merged:
                     raise Exception("No se encontraron rutas disponibles")
 
                 # ---- Fetching complete ----------------------------------------
@@ -354,7 +390,8 @@ class RoadsurferBot:
                 except Exception:
                     pass
 
-                self.stations_with_returns = output_data
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
                 self.data_fetcher.save_output_to_json(self.db_path)
 
                 current_stations = self._load_stations()
@@ -438,11 +475,11 @@ class RoadsurferBot:
                     filtered_returns = [r for r in route.get('returns', []) if self._route_passes_date_filter(user_id, r)]
                     if filtered_returns:
                         filtered_route = {**route, 'returns': filtered_returns}
-                        #self.logger.info(f"Found match! Origin '{origin}' is in favorites for user {user_id}")
                         if self._is_new_route(user_id, filtered_route):
                             self.logger.info(f"Sending notification to user {user_id} for new route from {origin}")
-                            await self._notify_user(user_id, filtered_route, context, is_origin=True)
-                            self._mark_route_as_notified(user_id, filtered_route)
+                            sent = await self._notify_user(user_id, filtered_route, context, is_origin=True)
+                            if sent:
+                                self._mark_route_as_notified(user_id, filtered_route)
                         else:
                             self.logger.debug(f"Route from {origin} already notified to user {user_id}")
                 
@@ -453,7 +490,6 @@ class RoadsurferBot:
                         if not self._route_passes_date_filter(user_id, ret):
                             self.logger.debug(f"Route to {destination} filtered out by date filter for user {user_id}")
                             continue
-                        #self.logger.info(f"Found match! Destination '{destination}' is in favorites for user {user_id}")
                         # Create route data for this specific destination match
                         dest_route = {
                             'origin': origin,
@@ -462,8 +498,9 @@ class RoadsurferBot:
                         }
                         if self._is_new_route(user_id, dest_route):
                             self.logger.info(f"Sending notification to user {user_id} for new route to {destination}")
-                            await self._notify_user(user_id, dest_route, context, is_origin=False)
-                            self._mark_route_as_notified(user_id, dest_route)
+                            sent = await self._notify_user(user_id, dest_route, context, is_origin=False)
+                            if sent:
+                                self._mark_route_as_notified(user_id, dest_route)
                         else:
                             self.logger.debug(f"Route to {destination} already notified to user {user_id}")
         
@@ -483,8 +520,9 @@ class RoadsurferBot:
                             'returns': [ret]  # Only include this specific destination
                         }
                         if self._is_new_route(user_id, single_route):
-                            await self._notify_user(user_id, single_route, context, is_origin=True)
-                            self._mark_route_as_notified(user_id, single_route)
+                            sent = await self._notify_user(user_id, single_route, context, is_origin=True)
+                            if sent:
+                                self._mark_route_as_notified(user_id, single_route)
                 
                 # Check if any destination is in favorites
                 for ret in station.get('returns', []):
@@ -498,8 +536,9 @@ class RoadsurferBot:
                             }]
                         }
                         if self._is_new_route(user_id, matching_route):
-                            await self._notify_user(user_id, matching_route, context, is_origin=False)
-                            self._mark_route_as_notified(user_id, matching_route)
+                            sent = await self._notify_user(user_id, matching_route, context, is_origin=False)
+                            if sent:
+                                self._mark_route_as_notified(user_id, matching_route)
         
         # After checking all users, check for deleted routes
         current_stations = self._load_stations()
@@ -535,16 +574,24 @@ class RoadsurferBot:
             self.logger.error(f"Error saving notification history: {e}")
 
 
-    async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE, is_origin: bool = True) -> None:
-        """Send notification to user about new routes using the same format as show_routes"""
+    async def _notify_user(self, user_id: str, station: Dict, context: ContextTypes.DEFAULT_TYPE, is_origin: bool = True) -> bool:
+        """Send notification to user about new routes using the same format as show_routes.
+        Returns True if the message was delivered, False otherwise."""
         try:
             self.logger.info(f"Preparing notification for user {user_id}: {station.get('origin')} -> {station.get('returns', [{}])[0].get('destination') if station.get('returns') else 'N/A'}")
             msg, image_path = self.format_station_html(station)
             self.logger.info(f"Sending photo to user {user_id} with image: {image_path}")
-            await self.send_jpeg_file(update=None, context=context, image_path=image_path, msg=msg, user_id=user_id)
-            self.logger.info(f"✅ Successfully sent notification to user {user_id}")
+            success = await self.send_jpeg_file(update=None, context=context, image_path=image_path, msg=msg, user_id=user_id)
+            if success:
+                self.logger.info(f"✅ Successfully sent notification to user {user_id}")
+            else:
+                self.logger.warning(f"⚠️ Failed to deliver notification to user {user_id}")
+            # Rate-limit: wait between notifications to avoid Telegram flood control
+            await asyncio.sleep(1.5)
+            return success
         except Exception as e:
             self.logger.error(f"Error sending notification to {user_id}: {e}", exc_info=True)
+            return False
 
     async def show_routes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show all available routes"""
@@ -553,7 +600,7 @@ class RoadsurferBot:
         
         if not self.stations_with_returns:
             await message.reply_text(
-                "No hay rutas disponibles. Usa /actualizar_rutas primero."
+                "No hay rutas disponibles. La base de datos se actualiza automáticamente."
             )
             return
 
@@ -850,7 +897,7 @@ class RoadsurferBot:
         try:
             if not self.stations_with_returns:
                 await message.reply_text(
-                    "No hay rutas disponibles. Usa /actualizar_rutas primero."
+                    "No hay rutas disponibles. La base de datos se actualiza automáticamente."
                 )
                 return    
             map_generator = RouteMapGenerator(self.logger)
@@ -867,65 +914,70 @@ class RoadsurferBot:
             
         self.logger.info(f"Sent interactive map to user {update.effective_user.first_name} (ID: {update.effective_user.id})")
         
-    async def send_jpeg_file(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, image_path: str = "", msg: str = "", user_id: str = None) -> None:
-        """Send the JPEG image of the map, either as a reply (when update is present) or directly to a user_id"""
+    async def send_jpeg_file(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, image_path: str = "", msg: str = "", user_id: str = None) -> bool:
+        """Send the JPEG image of the map, either as a reply (when update is present) or directly to a user_id.
+        Returns True if the message was delivered, False otherwise."""
         has_image = image_path and os.path.isfile(image_path)
-        try:
-            if has_image:
-                with open(image_path, "rb") as f:
+
+        for attempt in range(3):
+            try:
+                if has_image:
+                    with open(image_path, "rb") as f:
+                        if update is not None:
+                            message = update.message or update.callback_query.message
+                            await message.reply_photo(
+                                photo=InputFile(f, filename="image_path"),
+                                caption=msg,
+                                parse_mode=ParseMode.HTML
+                            )
+                        elif user_id is not None:
+                            await context.bot.send_photo(
+                                chat_id=user_id,
+                                photo=InputFile(f, filename="image_path"),
+                                caption=msg,
+                                parse_mode=ParseMode.HTML
+                            )
+                        else:
+                            self.logger.error("send_jpeg_file called without update or user_id.")
+                            return False
+                else:
+                    # No valid image — send text only
+                    if image_path:
+                        self.logger.warning(f"Image file not found, sending text only: {image_path}")
                     if update is not None:
                         message = update.message or update.callback_query.message
-                        await message.reply_photo(
-                            photo=InputFile(f, filename="image_path"),
-                            caption=msg,
-                            parse_mode=ParseMode.HTML
-                        )
+                        await message.reply_text(msg, parse_mode=ParseMode.HTML)
                     elif user_id is not None:
-                        await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=InputFile(f, filename="image_path"),
-                            caption=msg,
-                            parse_mode=ParseMode.HTML
-                        )
+                        await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
                     else:
                         self.logger.error("send_jpeg_file called without update or user_id.")
-            else:
-                # No valid image — send text only
-                if image_path:
-                    self.logger.warning(f"Image file not found, sending text only: {image_path}")
-                if update is not None:
-                    message = update.message or update.callback_query.message
-                    await message.reply_text(msg, parse_mode=ParseMode.HTML)
-                elif user_id is not None:
-                    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
-                else:
-                    self.logger.error("send_jpeg_file called without update or user_id.")
-        except Exception as e:
-            self.logger.error(f"Error sending message: {e}")
-            try:
-                if update is not None:
-                    message = update.message or update.callback_query.message
-                    await message.reply_text(msg, parse_mode=ParseMode.HTML)
-                elif user_id is not None:
-                    await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
-            except Exception as e2:
-                self.logger.error(f"Error sending fallback message: {e2}")
+                        return False
+                return True  # success
+            except Exception as e:
+                err_str = str(e)
+                # Retry on flood control or timeout
+                if ("Flood control" in err_str or "Timed out" in err_str) and attempt < 2:
+                    import re as _re
+                    wait = 5
+                    m = _re.search(r"Retry in (\d+)", err_str)
+                    if m:
+                        wait = int(m.group(1)) + 1
+                    self.logger.warning(f"Telegram rate limit, retrying in {wait}s (attempt {attempt+1}): {e}")
+                    await asyncio.sleep(wait)
+                    continue
+                self.logger.error(f"Error sending message: {e}")
+                # Last-resort fallback: try text-only
+                try:
+                    if update is not None:
+                        message = update.message or update.callback_query.message
+                        await message.reply_text(msg, parse_mode=ParseMode.HTML)
+                    elif user_id is not None:
+                        await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
+                    return True  # fallback succeeded
+                except Exception as e2:
+                    self.logger.error(f"Error sending fallback message: {e2}")
+                return False
 
-        
-    async def check_last_update_time(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show the last update time of the database"""
-        # Get the appropriate message object based on update type
-        message = update.message or update.callback_query.message
-        
-        if self.last_update_time == 0:
-            await message.reply_text("La base de datos aún no ha sido actualizada.")
-            return
-        
-        last_update = datetime.fromtimestamp(self.last_update_time).strftime('%Y-%m-%d %H:%M:%S')
-        await message.reply_text(f"La base de datos fue actualizada por última vez el {last_update}.")
-        
-        self.logger.info(f"Last update time sent to user {update.effective_user.first_name} (ID: {update.effective_user.id})")
-        
         
     async def send_json_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Send the JSON file with all routes"""
@@ -935,7 +987,7 @@ class RoadsurferBot:
         try:
             if not self.stations_with_returns:
                 await message.reply_text(
-                    "No hay rutas disponibles. Usa /actualizar_rutas primero."
+                    "No hay rutas disponibles. La base de datos se actualiza automáticamente."
                 )
                 return
             
@@ -976,9 +1028,7 @@ class RoadsurferBot:
         await query.answer()
 
         try:
-            if query.data == "update_database":
-                await self.update_database(update, context)
-            elif query.data == "show_routes":
+            if query.data == "show_routes":
                 await self.show_routes(update, context)
             elif query.data == "show_favorites":
                 await self.show_favorites(update, context)
@@ -1105,10 +1155,29 @@ class RoadsurferBot:
         for ret in station.get("returns", []):
             lines.append(f"🔁 <b>Destino</b>: <b>{ret['destination']}</b>")
             for d in ret.get("available_dates", []):
-                lines.append(f"📅 <code>{d['startDate']} → {d['endDate']}</code>")
+                date_line = f"📅 <code>{d['startDate']} → {d['endDate']}</code>"
+                duration = d.get("duration")
+                if duration:
+                    date_line += f"  ⏱ {duration}"
+                rate = d.get("rate")
+                extra_rate = d.get("extra_rate")
+                currency = d.get("currency", "EUR")
+                sym = "£" if currency == "GBP" else "€"
+                if rate is not None:
+                    date_line += f"  💰 {sym}{rate:.2f}/n"
+                    if extra_rate is not None and extra_rate > 0:
+                        date_line += f" (+{sym}{extra_rate:.2f}/n extra)"
+                lines.append(date_line)
             
             lines.append(f"🚐{ret.get('model_name', 'Modelo desconocido')}")
-            lines.append(f"🌐 <a href='{ret.get('roadsurfer_url', '#')}'>Ver en Roadsurfer</a>")
+            booking_url = ret.get('roadsurfer_url', '#')
+            if "indiecampers.com" in booking_url:
+                link_label = "Ver en Indie Campers"
+            elif "imoova.com" in booking_url:
+                link_label = "Ver en Imoova"
+            else:
+                link_label = "Ver en Roadsurfer"
+            lines.append(f"🌐 <a href='{booking_url}'>{link_label}</a>")
             model_image = ret.get("model_image", "")
             if model_image:
                 image_path = os.path.join(self.assets_folder, model_image)
@@ -1151,7 +1220,38 @@ class RoadsurferBot:
                         loop
                     )
 
-                # ---- Run the entire blocking pipeline in the thread pool --------
+                # ---- Fetch imoova relocations (first) ----
+                self.logger.info("Auto-update: fetching imoova relocations...")
+                imoova_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.imoova_fetcher.sync_full_update(
+                        route_callback=sync_route_callback,
+                    )
+                )
+
+                # Save after Imoova
+                merged = list(imoova_data or [])
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
+                self.data_fetcher.save_output_to_json(self.db_path)
+
+                # ---- Fetch Indie Campers deals ----
+                self.logger.info("Auto-update: fetching Indie Campers deals...")
+                indie_data = await loop.run_in_executor(
+                    self._update_executor,
+                    lambda: self.indie_campers_fetcher.sync_full_update(
+                        route_callback=sync_route_callback,
+                    )
+                )
+
+                # Save after Indie Campers
+                merged = merged + (indie_data or [])
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
+                self.data_fetcher.save_output_to_json(self.db_path)
+
+                # ---- Fetch Roadsurfer routes ----
+                self.logger.info("Auto-update: fetching Roadsurfer routes...")
                 output_data = await loop.run_in_executor(
                     self._update_executor,
                     lambda: self.data_fetcher.sync_full_update(
@@ -1160,11 +1260,14 @@ class RoadsurferBot:
                     )
                 )
 
-                if not output_data:
+                # Final merge and save
+                merged = merged + (output_data or [])
+                if not merged:
                     raise Exception("No se encontraron rutas disponibles")
 
                 # ---- Back on the event loop: update shared state ----------------
-                self.stations_with_returns = output_data
+                self.stations_with_returns = merged
+                self.data_fetcher.output_data = merged
                 self.data_fetcher.save_output_to_json(self.db_path)
                 self.last_update_time = time.time()
 
@@ -1185,10 +1288,10 @@ class RoadsurferBot:
                 if context.job_queue and not DEBUG_MODE:
                     context.job_queue.run_once(
                         self._job_update_database,
-                        when=5,
+                        when=300,
                         name='database_update'
                     )
-                    self.logger.info("Next database update scheduled in 5 seconds")
+                    self.logger.info("Next database update scheduled in 5 minutes")
             
     async def notify_all_users(self, message: str):
         """Send a message to all users in user_favorites"""

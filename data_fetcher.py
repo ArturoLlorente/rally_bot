@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import logging
 import json
@@ -376,7 +376,7 @@ class StationDataFetcher:
     def validate_station_data(self, station: dict) -> bool:
         """Validate that a station has all required fields"""
         if not isinstance(station, dict):
-            logger.error(f"Invalid station data type: {type(station)}")
+            self.logger.error(f"Invalid station data type: {type(station)}")
             return False
         required_fields = ["id", "name", "address"]
         missing_fields = [field for field in required_fields if field not in station]
@@ -679,3 +679,633 @@ class StationDataFetcher:
         except Exception as e:
             self.logger.error(f"_sync_process_station_destinations error: {e}")
             return False
+
+
+class ImoovaDataFetcher:
+    """Class to fetch and process relocation data from the Imoova GraphQL API"""
+
+    GRAPHQL_URL = "https://api.imoova.com/graphql"
+    PAGE_SIZE = 100
+    REGIONS = ["EU"]
+
+    RELOCATIONS_QUERY = """
+    query($regions: [Region!], $first: Int!, $page: Int!, $status: [RelocationStatus!]) {
+        relocations(regions: $regions, first: $first, page: $page, status: $status) {
+            data {
+                id
+                departureCity { name state }
+                departureOffice { name address { city state country postcode } }
+                deliveryCity { name state }
+                deliveryOffice { name address { city state country postcode } }
+                earliest_departure_date
+                latest_departure_date
+                images { url }
+                vehicle { name type images { url } }
+                trip { duration distance }
+                hire_unit_rate
+                hire_unit_type
+                extra_hire_unit_rate
+                extra_hire_units_allowed
+                currency
+                status
+            }
+            paginatorInfo { total currentPage lastPage hasMorePages }
+        }
+    }
+    """
+
+    def __init__(self, logger: Optional[logging.Logger] = None) -> None:
+        self.logger = logger or logging.getLogger(__name__)
+        self.output_data: List[Dict] = []
+
+        # Rate limiting settings
+        self.request_delay = 0.1
+        self.max_retries = 3
+        self.retry_delay = 5
+
+    def _graphql_request(self, query: str, variables: dict) -> Optional[Dict]:
+        """Execute a GraphQL request with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
+                if attempt > 0:
+                    wait_time = self.retry_delay * (2 ** (attempt - 1))
+                    self.logger.info(f"Retrying imoova request (attempt {attempt + 1}/{self.max_retries}) after {wait_time}s")
+                    time.sleep(wait_time)
+                else:
+                    time.sleep(self.request_delay)
+
+                resp = requests.post(
+                    self.GRAPHQL_URL,
+                    json={"query": query, "variables": variables},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    },
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+
+                if "errors" in result:
+                    self.logger.error(f"GraphQL errors: {result['errors']}")
+                    return None
+
+                return result.get("data")
+
+            except requests.exceptions.HTTPError as e:
+                if resp.status_code == 429 and attempt < self.max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"Imoova rate limit (429). Waiting {wait_time}s")
+                    time.sleep(wait_time)
+                    continue
+                self.logger.error(f"Imoova HTTP Error {resp.status_code}: {e}")
+                return None
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"Imoova request error: {e}. Retrying in {wait_time}s")
+                    time.sleep(wait_time)
+                    continue
+                self.logger.error(f"Imoova request failed after {self.max_retries} attempts: {e}")
+                return None
+        return None
+
+    def _fetch_all_relocations(self, progress_callback=None) -> List[Dict]:
+        """Fetch all READY relocations from imoova, paginating through results"""
+        all_relocations = []
+        page = 1
+        total_pages = None
+
+        while True:
+            variables = {
+                "regions": self.REGIONS,
+                "first": self.PAGE_SIZE,
+                "page": page,
+                "status": ["READY"],
+            }
+            data = self._graphql_request(self.RELOCATIONS_QUERY, variables)
+            if not data:
+                self.logger.error(f"Failed to fetch imoova relocations page {page}")
+                break
+
+            relocations_data = data.get("relocations", {})
+            page_items = relocations_data.get("data", [])
+            paginator = relocations_data.get("paginatorInfo", {})
+
+            if total_pages is None:
+                total_pages = paginator.get("lastPage", 1)
+                total = paginator.get("total", 0)
+                self.logger.info(f"Imoova: {total} READY relocations across {total_pages} pages")
+
+            all_relocations.extend(page_items)
+
+            if progress_callback and total_pages:
+                progress_callback(int(page / total_pages * 100))
+
+            if not paginator.get("hasMorePages", False):
+                break
+
+            page += 1
+
+        self.logger.info(f"Imoova: fetched {len(all_relocations)} relocations")
+        return all_relocations
+
+    def _group_relocations(self, relocations: List[Dict]) -> List[Dict]:
+        """Group relocations by origin city and build output in station_routes format.
+
+        Within each origin, relocations are further grouped by
+        (destination city, vehicle name) so that multiple date windows
+        for the same route & vehicle share a single return entry.
+        """
+        # origin_city -> { (dest_city, vehicle_name) -> { ... } }
+        origins: Dict[str, Dict] = {}
+
+        for rel in relocations:
+            try:
+                dep_city = rel.get("departureCity", {}).get("name", "")
+                dep_office = rel.get("departureOffice", {}) or {}
+                dep_addr = dep_office.get("address", {}) or {}
+                origin_address = ", ".join(filter(None, [
+                    dep_addr.get("city", ""),
+                    dep_addr.get("postcode", ""),
+                    dep_addr.get("country", ""),
+                ]))
+
+                del_city = rel.get("deliveryCity", {}).get("name", "")
+                del_office = rel.get("deliveryOffice", {}) or {}
+                del_addr = del_office.get("address", {}) or {}
+                dest_address = ", ".join(filter(None, [
+                    del_addr.get("city", ""),
+                    del_addr.get("postcode", ""),
+                    del_addr.get("country", ""),
+                ]))
+
+                vehicle = rel.get("vehicle", {}) or {}
+                vehicle_name = vehicle.get("name", "Unknown")
+                images = vehicle.get("images", []) or []
+                if not images:
+                    images = rel.get("images", []) or []
+                image_url = images[0].get("url", "") if images else ""
+
+                earliest = rel.get("earliest_departure_date", "")
+                latest = rel.get("latest_departure_date", "")
+                trip = rel.get("trip", {}) or {}
+                duration = trip.get("duration", 0)
+                extra_nights = rel.get("extra_hire_units_allowed", 0) or 0
+                hire_unit_type = rel.get("hire_unit_type", "NIGHT")
+                unit_label = "nights" if hire_unit_type == "NIGHT" else "days"
+                if extra_nights:
+                    duration_str = f"{duration}+{extra_nights} {unit_label}"
+                else:
+                    duration_str = f"{duration} {unit_label}"
+                rate_cents = rel.get("hire_unit_rate", 0) or 0
+                extra_rate_cents = rel.get("extra_hire_unit_rate", 0) or 0
+                currency = rel.get("currency", "EUR")
+                rate = rate_cents / 100
+                extra_rate = extra_rate_cents / 100
+                rel_id = rel.get("id", "")
+
+                if not dep_city or not del_city or not earliest:
+                    continue
+
+                # Compute date window
+                try:
+                    start_dt = datetime.strptime(earliest, "%Y-%m-%d")
+                    if latest:
+                        latest_dt = datetime.strptime(latest, "%Y-%m-%d")
+                    else:
+                        latest_dt = start_dt
+                    end_dt = latest_dt + timedelta(days=duration)
+                except ValueError:
+                    continue
+
+                origin_key = dep_city
+                if origin_key not in origins:
+                    origins[origin_key] = {
+                        "origin": StationDataFetcher.cleanup_special_characters(dep_city),
+                        "origin_address": StationDataFetcher.cleanup_special_characters(origin_address),
+                        "returns_map": {},
+                    }
+
+                route_key = (del_city, vehicle_name)
+                rmap = origins[origin_key]["returns_map"]
+                if route_key not in rmap:
+                    rmap[route_key] = {
+                        "destination": StationDataFetcher.cleanup_special_characters(del_city),
+                        "destination_address": StationDataFetcher.cleanup_special_characters(dest_address),
+                        "available_dates": [],
+                        "model_name": vehicle_name,
+                        "model_image": "",
+                        "image_url": image_url,
+                        "imoova_url": f"https://www.imoova.com/en/relocations/{rel_id}",
+                        "relocation_ids": [],
+                    }
+                entry = rmap[route_key]
+                entry["available_dates"].append({
+                    "startDate": start_dt.strftime("%d/%m/%Y"),
+                    "endDate": end_dt.strftime("%d/%m/%Y"),
+                    "duration": duration_str,
+                    "rate": rate,
+                    "extra_rate": extra_rate,
+                    "currency": currency,
+                })
+                entry["relocation_ids"].append(rel_id)
+
+            except Exception as e:
+                self.logger.warning(f"Error processing imoova relocation {rel.get('id', '?')}: {e}")
+                continue
+
+        # Build final output
+        output = []
+        for origin_data in origins.values():
+            station_obj = {
+                "origin": origin_data["origin"],
+                "origin_address": origin_data["origin_address"],
+                "returns": [],
+            }
+            for route_entry in origin_data["returns_map"].values():
+                station_obj["returns"].append({
+                    "destination": route_entry["destination"],
+                    "destination_address": route_entry["destination_address"],
+                    "available_dates": route_entry["available_dates"],
+                    "model_name": route_entry["model_name"],
+                    "model_image": route_entry["model_image"],
+                    "image_url": route_entry["image_url"],
+                    "roadsurfer_url": route_entry["imoova_url"],
+                })
+            output.append(station_obj)
+
+        return output
+
+    def _download_images(self, output_data: List[Dict]) -> None:
+        """Download vehicle images for all routes"""
+        for station in output_data:
+            for ret in station.get("returns", []):
+                image_url = ret.pop("image_url", "")
+                if image_url and not ret.get("model_image"):
+                    ret["model_image"] = self._download_image(image_url)
+
+    @staticmethod
+    def _to_jpeg_url(image_url: str) -> str:
+        """Convert an imoova CDN image URL to its JPEG conversion variant.
+
+        Original: https://d3ked445tp4xeq.cloudfront.net/258021/filename.avif
+        Converted: https://d3ked445tp4xeq.cloudfront.net/258021/conversions/filename-SMALL.jpg
+        """
+        parts = image_url.rsplit("/", 1)
+        if len(parts) != 2:
+            return image_url
+        base, filename = parts
+        name = filename.rsplit(".", 1)[0] if "." in filename else filename
+        return f"{base}/conversions/{name}-SMALL.jpg"
+
+    def _download_image(self, image_url: str) -> str:
+        """Download a single image and return the local filename"""
+        if not image_url:
+            return ""
+        try:
+            # Convert to JPEG variant so Telegram can display it
+            jpeg_url = self._to_jpeg_url(image_url)
+            filename = jpeg_url.split("/")[-1]
+            filepath = os.path.join("assets", filename)
+            if os.path.exists(filepath):
+                return filename
+            response = requests.get(jpeg_url, stream=True, timeout=15)
+            if response.status_code == 200:
+                with open(filepath, "wb") as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+                return filename
+            else:
+                self.logger.warning(f"Failed to download imoova image: {response.status_code} from {jpeg_url}")
+                return ""
+        except Exception as e:
+            self.logger.warning(f"Error downloading imoova image {image_url}: {e}")
+            return ""
+
+    def sync_full_update(self, progress_callback=None, route_callback=None) -> List[Dict]:
+        """Run the full imoova update pipeline synchronously.
+
+        Designed to be called from a worker thread via run_in_executor.
+
+        Args:
+            progress_callback: Optional sync callable(percent: int)
+            route_callback:    Optional sync callable(route_data: dict)
+
+        Returns:
+            List of station/route records in the same format as
+            StationDataFetcher.output_data.
+        """
+        self.logger.info("Imoova: starting full update")
+
+        # Phase 1: Fetch all relocations
+        relocations = self._fetch_all_relocations(progress_callback=progress_callback)
+        if not relocations:
+            self.logger.warning("Imoova: no relocations found")
+            return []
+
+        # Phase 2: Group into station_routes format
+        self.output_data = self._group_relocations(relocations)
+        self.logger.info(f"Imoova: grouped into {len(self.output_data)} origin stations")
+
+        # Phase 3: Download images
+        self._download_images(self.output_data)
+
+        # Phase 4: Fire route callbacks
+        if route_callback:
+            for station in self.output_data:
+                for ret in station.get("returns", []):
+                    single_route = {
+                        "origin": station["origin"],
+                        "origin_address": station["origin_address"],
+                        "returns": [ret],
+                    }
+                    try:
+                        route_callback(single_route)
+                    except Exception as e:
+                        self.logger.error(f"Error in imoova route callback: {e}", exc_info=True)
+
+        self.logger.info(f"Imoova: update complete — {len(self.output_data)} stations")
+        return self.output_data
+
+
+class IndieCampersDataFetcher:
+    """Class to fetch and process relocation deal data from the Indie Campers API"""
+
+    SEARCH_URL = "https://edge.indiecampers.com/api/v3/deals/search"
+    PAGE_SIZE = 25
+    BASE_DEALS_URL = "https://indiecampers.com/deals"
+
+    # Slug → display name mapping for locations.
+    # Slugs follow the pattern "city-name" or "city-name-offers".
+    # We strip the "-offers" suffix and title-case the remainder.
+    # Special cases are handled explicitly.
+    _LOCATION_OVERRIDES: Dict[str, str] = {
+        "rome-fco": "Rome",
+        "rome-fco-offers": "Rome",
+        "paris-charles-de-gaulle": "Paris CDG",
+        "paris-charles-de-gaulle-offers": "Paris CDG",
+        "paris-orly": "Paris Orly",
+        "paris-orly-offers": "Paris Orly",
+        "london-heathrow": "London Heathrow",
+        "london-heathrow-offers": "London Heathrow",
+        "milan-malpensa": "Milan Malpensa",
+        "milan-malpensa-offers": "Milan Malpensa",
+        "brussels-zaventem": "Brussels",
+        "coruna": "A Coruña",
+        "malmo": "Malmö",
+        "munich-offers": "Munich",
+    }
+
+    def __init__(self, logger: Optional[logging.Logger] = None) -> None:
+        self.logger = logger or logging.getLogger(__name__)
+        self.output_data: List[Dict] = []
+
+        self.request_delay = 2  # seconds between pages (rate-limit safe)
+        self.max_retries = 3
+        self.retry_delay = 5
+
+        self._session_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://indiecampers.com/deals",
+        }
+
+    # ---- helpers ----
+
+    @classmethod
+    def _slug_to_display(cls, slug: str) -> str:
+        if slug in cls._LOCATION_OVERRIDES:
+            return cls._LOCATION_OVERRIDES[slug]
+        clean = slug.removesuffix("-offers")
+        return clean.replace("-", " ").title()
+
+    @staticmethod
+    def _van_category_to_display(slug: str) -> str:
+        """eu-comfort-space-4-auto-select → Comfort Space"""
+        parts = slug.split("-")
+        # Skip region prefix (eu/na) and trailing spec tokens
+        spec_tokens = {
+            "auto", "manual", "base", "select",
+            "2", "3", "4", "5", "6", "7",
+        }
+        name_parts = []
+        for p in parts[1:]:  # skip region
+            if p.lower() in spec_tokens:
+                break
+            name_parts.append(p.title())
+        return " ".join(name_parts) if name_parts else slug
+
+    @staticmethod
+    def _build_booking_url(hash_id: str, start_date: str, end_date: str) -> str:
+        """Build a deal URL using: https://indiecampers.com/deals/europe/{hash_id}?start=...&end=..."""
+        return (
+            f"https://indiecampers.com/deals/europe/{hash_id}"
+            f"?start={start_date}&end={end_date}"
+        )
+
+    # ---- API calls ----
+
+    def _fetch_page(self, page: int) -> Optional[Dict]:
+        for attempt in range(self.max_retries):
+            try:
+                if attempt > 0:
+                    wait = self.retry_delay * (2 ** (attempt - 1))
+                    self.logger.info(f"IndieCampers: retrying page {page} (attempt {attempt+1}) after {wait}s")
+                    time.sleep(wait)
+
+                resp = requests.get(
+                    self.SEARCH_URL,
+                    params={"page": page},
+                    headers=self._session_headers,
+                    timeout=15,
+                )
+
+                if resp.status_code == 429 and attempt < self.max_retries - 1:
+                    wait = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"IndieCampers: rate-limited (429). Waiting {wait}s")
+                    time.sleep(wait)
+                    continue
+
+                if resp.status_code == 403 and attempt < self.max_retries - 1:
+                    wait = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"IndieCampers: 403, waiting {wait}s")
+                    time.sleep(wait)
+                    continue
+
+                resp.raise_for_status()
+                return resp.json()
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    wait = self.retry_delay * (2 ** attempt)
+                    self.logger.warning(f"IndieCampers page {page} error: {e}. Retrying in {wait}s")
+                    time.sleep(wait)
+                    continue
+                self.logger.error(f"IndieCampers page {page} failed after {self.max_retries} attempts: {e}")
+                return None
+        return None
+
+    def _fetch_all_deals(self, progress_callback=None) -> List[Dict]:
+        """Fetch all deal routes from all pages."""
+        all_routes: List[Dict] = []
+        page = 1
+        total_pages = None
+
+        while True:
+            if page > 1:
+                time.sleep(self.request_delay)
+
+            data = self._fetch_page(page)
+            if not data:
+                self.logger.error(f"IndieCampers: failed to fetch page {page}")
+                break
+
+            routes = data.get("data", [])
+            if not routes:
+                break
+
+            if total_pages is None:
+                total = data.get("total", 0)
+                total_pages = max(1, -(-total // self.PAGE_SIZE))  # ceil division
+                self.logger.info(f"IndieCampers: {total} routes across {total_pages} pages")
+
+            all_routes.extend(routes)
+
+            if progress_callback and total_pages:
+                progress_callback(int(page / total_pages * 100))
+
+            if page >= (total_pages or page):
+                break
+            page += 1
+
+        self.logger.info(f"IndieCampers: fetched {len(all_routes)} routes")
+        return all_routes
+
+    # ---- grouping ----
+
+    def _group_deals(self, routes: List[Dict]) -> List[Dict]:
+        """Group deals into the station_routes format used by the bot.
+
+        Groups by (origin slug, destination slug, van display name) so that
+        multiple date windows share a single return entry.
+        """
+        origins: Dict[str, Dict] = {}
+
+        for route in routes:
+            pickup_slug = route.get("pick_up_location", "")
+            dropoff_slug = route.get("drop_off_location", "")
+            pickup_display = self._slug_to_display(pickup_slug)
+            dropoff_display = self._slug_to_display(dropoff_slug)
+
+            for deal in route.get("deals", []):
+                van_slug = deal.get("van_category", "")
+                van_display = self._van_category_to_display(van_slug)
+                price = deal.get("min_price")
+                max_nights = deal.get("max_max_nights")
+
+                origin_key = pickup_slug
+                if origin_key not in origins:
+                    origins[origin_key] = {
+                        "origin": pickup_display,
+                        "origin_address": "",
+                        "returns_map": {},
+                    }
+
+                route_key = (dropoff_slug, van_slug)
+                rmap = origins[origin_key]["returns_map"]
+                if route_key not in rmap:
+                    rmap[route_key] = {
+                        "destination": dropoff_display,
+                        "destination_address": "",
+                        "available_dates": [],
+                        "model_name": van_display,
+                        "model_image": "",
+                        "booking_url": "",  # will be set from first hash_id
+                    }
+
+                entry = rmap[route_key]
+                for ad in deal.get("available_dates", []):
+                    earliest = ad.get("earliest_checkin_date", "")
+                    latest = ad.get("latest_checkout_date", "")
+                    hash_id = ad.get("hash_id", "")
+                    if not earliest:
+                        continue
+                    try:
+                        start_dt = datetime.strptime(earliest, "%Y-%m-%d")
+                        end_dt = datetime.strptime(latest, "%Y-%m-%d") if latest else start_dt
+                    except ValueError:
+                        continue
+
+                    # Use first hash_id for the route-level booking URL
+                    if not entry["booking_url"] and hash_id:
+                        entry["booking_url"] = self._build_booking_url(
+                            hash_id, earliest, latest or earliest
+                        )
+
+                    night_count = ad.get("max_nights", max_nights)
+                    date_entry = {
+                        "startDate": start_dt.strftime("%d/%m/%Y"),
+                        "endDate": end_dt.strftime("%d/%m/%Y"),
+                    }
+                    if night_count is not None:
+                        date_entry["duration"] = f"{night_count} nights max"
+                    if price is not None:
+                        date_entry["rate"] = price
+                        date_entry["currency"] = "EUR"
+                    entry["available_dates"].append(date_entry)
+
+        # Build final output
+        output = []
+        for origin_data in origins.values():
+            station_obj = {
+                "origin": origin_data["origin"],
+                "origin_address": origin_data["origin_address"],
+                "returns": [],
+            }
+            for route_entry in origin_data["returns_map"].values():
+                station_obj["returns"].append({
+                    "destination": route_entry["destination"],
+                    "destination_address": route_entry["destination_address"],
+                    "available_dates": route_entry["available_dates"],
+                    "model_name": route_entry["model_name"],
+                    "model_image": route_entry["model_image"],
+                    "roadsurfer_url": route_entry["booking_url"],
+                })
+            output.append(station_obj)
+
+        return output
+
+    # ---- main update pipeline ----
+
+    def sync_full_update(self, progress_callback=None, route_callback=None) -> List[Dict]:
+        """Run the full IndieCampers update pipeline synchronously."""
+        self.logger.info("IndieCampers: starting full update")
+
+        routes = self._fetch_all_deals(progress_callback=progress_callback)
+        if not routes:
+            self.logger.warning("IndieCampers: no deals found")
+            return []
+
+        self.output_data = self._group_deals(routes)
+        self.logger.info(f"IndieCampers: grouped into {len(self.output_data)} origin stations")
+
+        if route_callback:
+            for station in self.output_data:
+                for ret in station.get("returns", []):
+                    single_route = {
+                        "origin": station["origin"],
+                        "origin_address": station["origin_address"],
+                        "returns": [ret],
+                    }
+                    try:
+                        route_callback(single_route)
+                    except Exception as e:
+                        self.logger.error(f"Error in IndieCampers route callback: {e}", exc_info=True)
+
+        self.logger.info(f"IndieCampers: update complete — {len(self.output_data)} stations")
+        return self.output_data
