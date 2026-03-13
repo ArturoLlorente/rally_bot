@@ -6,3 +6,4 @@ __pycache__/
 bot.log*
 station_routes.json
 notification_history.json
+assets/*
