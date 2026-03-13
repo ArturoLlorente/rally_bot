@@ -1,5 +1,4 @@
 python-telegram-bot[job-queue]==20.7
-#python-telegram-bot==20.7
 folium==0.15.1
 tqdm>=4.66.1
 geopy>=2.4.1
@@ -7,4 +6,4 @@ branca>=0.6.0
 python-dotenv==1.0.0
 requests==2.31.0
 urllib3>=2.1.0
-telegram_bot_calendar==1.0.5
+python-telegram-bot-calendar==1.0.5

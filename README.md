@@ -49,12 +49,50 @@ rally_bot/
 
 ## Usage
 
-1. Start the bot:
+1. Start the bot (development):
 ```bash
-python run_bot.py
+uv run python run_bot.py
 ```
 
 2. In Telegram, start a chat with your bot and use `/start` to begin.
+
+## Running as a Service
+
+The bot runs as a **systemd system service** (`rally-bot.service`), which means:
+
+- Starts automatically on every boot
+- Restarts automatically if it crashes (`Restart=always`, 10s delay)
+- Runs detached from any terminal — SSH disconnects have no effect
+- Waits for a network connection before starting (needs the Telegram API)
+- Runs as the `allorana` user
+
+Service file: `/etc/systemd/system/rally-bot.service`
+
+```ini
+[Service]
+User=allorana
+WorkingDirectory=/home/allorana/repos/rally_bot
+ExecStart=/home/allorana/.local/bin/uv run python run_bot.py
+Restart=always
+RestartSec=10
+```
+
+### Install / start
+
+```bash
+sudo cp rally_bot/rally-bot.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rally-bot
+```
+
+### Useful commands
+
+```bash
+systemctl status rally-bot          # check status & recent logs
+systemctl restart rally-bot         # restart the bot
+systemctl stop rally-bot            # stop (won't auto-restart until started again)
+journalctl -u rally-bot -f          # follow live logs
+```
 
 ## Available Commands
 
