@@ -4,6 +4,7 @@ import logging
 import json
 import requests
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Callable, Any
 from json import loads
 from urllib.request import Request, urlopen
@@ -1057,6 +1058,15 @@ class IndieCampersDataFetcher:
         "munich-offers": "Munich",
     }
 
+    # Local image assets live at assets/indiecampers/{model-key}.avif
+    # Model key is derived from the van_category slug by stripping the
+    # region prefix (eu/na) and trailing spec tokens (seat count,
+    # transmission, "select").
+    # e.g. "eu-comfort-long-5-auto-select" → key "comfort-long"
+    #      → path  "assets/indiecampers/comfort-long.avif"
+    # Add a new image to that folder and it is picked up automatically.
+    _INDIECAMPERS_ASSETS_DIR = Path(__file__).parent / "assets" / "indiecampers"
+
     def __init__(self, logger: Optional[logging.Logger] = None) -> None:
         self.logger = logger or logging.getLogger(__name__)
         self.output_data: List[Dict] = []
@@ -1099,6 +1109,27 @@ class IndieCampersDataFetcher:
                 break
             name_parts.append(p.title())
         return " ".join(name_parts) if name_parts else slug
+
+    @staticmethod
+    def _van_slug_to_model_key(slug: str) -> str:
+        """eu-comfort-space-4-auto-select → 'comfort-space'"""
+        parts = slug.split("-")
+        spec_tokens = {"auto", "manual", "base", "select", "2", "3", "4", "5", "6", "7"}
+        name_parts = []
+        for p in parts[1:]:  # skip region prefix
+            if p.lower() in spec_tokens:
+                break
+            name_parts.append(p.lower())
+        return "-".join(name_parts)
+
+    @classmethod
+    def _van_slug_to_image(cls, slug: str) -> str:
+        """Return the relative asset path for a van_category slug, or '' if not found."""
+        key = cls._van_slug_to_model_key(slug)
+        candidate = cls._INDIECAMPERS_ASSETS_DIR / f"{key}.avif"
+        if candidate.exists():
+            return f"indiecampers/{key}.avif"
+        return ""
 
     @staticmethod
     def _build_booking_url(hash_id: str, start_date: str, end_date: str) -> str:
@@ -1224,7 +1255,7 @@ class IndieCampersDataFetcher:
                         "destination_address": "",
                         "available_dates": [],
                         "model_name": van_display,
-                        "model_image": "",
+                        "model_image": self._van_slug_to_image(van_slug),
                         "booking_url": "",  # will be set from first hash_id
                     }
 

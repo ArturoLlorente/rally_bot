@@ -1179,7 +1179,8 @@ class RoadsurferBot:
                 link_label = "Ver en Roadsurfer"
             lines.append(f"🌐 <a href='{booking_url}'>{link_label}</a>")
             model_image = ret.get("model_image", "")
-            if model_image:
+            # Ignore stale URL-based values from old fetches; only use local paths
+            if model_image and not model_image.startswith("http"):
                 image_path = os.path.join(self.assets_folder, model_image)
             
         
