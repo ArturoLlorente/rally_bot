@@ -7,3 +7,4 @@ bot.log*
 station_routes.json
 notification_history.json
 assets/*
+rutas_interactivas.html
