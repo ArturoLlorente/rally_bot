@@ -870,13 +870,19 @@ class ImoovaDataFetcher:
                     continue
 
                 # Compute date window
+                # - startDate     : earliest pickup  (earliest_departure_date)
+                # - latestPickup  : latest pickup    (latest_departure_date)
+                # - endDate       : latest dropoff   (latest_departure_date + 1 day)
+                #   Verified against the Imoova website for multiple relocations:
+                #   the latest dropoff is always latest_pickup + 1, regardless of
+                #   trip.duration.
                 try:
                     start_dt = datetime.strptime(earliest, "%Y-%m-%d")
                     if latest:
-                        latest_dt = datetime.strptime(latest, "%Y-%m-%d")
+                        latest_pickup_dt = datetime.strptime(latest, "%Y-%m-%d")
                     else:
-                        latest_dt = start_dt
-                    end_dt = latest_dt + timedelta(days=duration)
+                        latest_pickup_dt = start_dt
+                    end_dt = latest_pickup_dt + timedelta(days=1)
                 except ValueError:
                     continue
 
@@ -904,6 +910,7 @@ class ImoovaDataFetcher:
                 entry = rmap[route_key]
                 entry["available_dates"].append({
                     "startDate": start_dt.strftime("%d/%m/%Y"),
+                    "latestPickup": latest_pickup_dt.strftime("%d/%m/%Y"),
                     "endDate": end_dt.strftime("%d/%m/%Y"),
                     "duration": duration_str,
                     "rate": rate,

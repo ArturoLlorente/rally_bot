@@ -19,7 +19,6 @@ from telegram_bot_calendar import DetailedTelegramCalendar
 
 #from api_utils import get_stations_data
 #from data_utils import print_routes_for_stations, get_stations_with_returns, save_output_to_json
-from gui import RouteMapGenerator
 from data_fetcher import StationDataFetcher, ImoovaDataFetcher, IndieCampersDataFetcher
 import requests
 
@@ -213,8 +212,6 @@ class RoadsurferBot:
             BotCommand("favoritos", "⭐ Ver tus estaciones favoritas"),
             BotCommand("agregar_favorito", "➕ Añadir estación favorita"),
             BotCommand("eliminar_favorito", "➖ Eliminar estación favorita"),
-            BotCommand("send_json", "📄 Descargar archivo JSON con todas las rutas"),
-            BotCommand("descargar_mapa", "🗺️ Descargar mapa interactivo"),
             BotCommand("check_new_routes", "🔔 Comprobar nuevas rutas para tus favoritos"),
             BotCommand("set_date_filter", "🗓️ Configurar filtros de fecha para notificaciones"),
             BotCommand("help", "❓ Mostrar ayuda y comandos disponibles"),
@@ -232,9 +229,7 @@ class RoadsurferBot:
         self.application.add_handler(CommandHandler("favoritos", self.show_favorites))
         self.application.add_handler(CommandHandler("agregar_favorito", self.add_favorite))
         self.application.add_handler(CommandHandler("eliminar_favorito", self.remove_favorite))
-        self.application.add_handler(CommandHandler("descargar_mapa", self.send_html_file))
-        self.application.add_handler(CommandHandler("send_json", self.send_json_file))
-        self.application.add_handler(CommandHandler("check_new_routes", self._check_deleted_routes))
+        self.application.add_handler(CommandHandler("check_new_routes", self.check_new_routes))
         self.application.add_handler(CommandHandler("set_date_filter", self.set_date_filter))
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -252,7 +247,6 @@ class RoadsurferBot:
             [InlineKeyboardButton("➕ Añadir estación favorita", callback_data="add_favorite")],
             [InlineKeyboardButton("➖ Eliminar estación favorita", callback_data="remove_favorite")],
             [InlineKeyboardButton("🗓️ Configurar filtros de fecha", callback_data="set_date_filter")],
-            [InlineKeyboardButton("🗺️ Descargar mapa interactivo", callback_data="send_html_file")],
             [InlineKeyboardButton("❓ Ayuda", callback_data="help_command")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -262,8 +256,7 @@ class RoadsurferBot:
             "por Arturo (@arlloren) the Machine! 🚐\n\n"
             "Aquí puedes:\n"
             "• Ver rutas disponibles\n"
-            "• Gestionar (Añadir/eliminar/ver) estaciones favoritas\n"
-            "• Descargar mapa interactivo con las rutas \n\n"
+            "• Gestionar (Añadir/eliminar/ver) estaciones favoritas\n\n"
             "Para sugerencias sobre como mejorar el bot, contactame por telegram.\n\n"
             "Selecciona una opción:",
             reply_markup=reply_markup
@@ -686,8 +679,8 @@ class RoadsurferBot:
         if row:
             keyboard.append(row)
 
-        # Add Done button at the bottom
-        keyboard.append([InlineKeyboardButton("✅ Guardar Selección", callback_data="save_favorites")])
+        # Put the save button at the top so it stays visible even with many stations
+        keyboard.insert(0, [InlineKeyboardButton("✅ Guardar Selección", callback_data="save_favorites")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -727,8 +720,8 @@ class RoadsurferBot:
         keyboard = []
         row = []
         for station in sorted(self.user_favorites[user_id]):
-            # ★ indicates selected state
-            row.append(InlineKeyboardButton(f"★ {station}", callback_data=f"toggle_remove_{station}"))
+            # ☆ indicates unselected state; tapping marks it (★) for removal
+            row.append(InlineKeyboardButton(f"☆ {station}", callback_data=f"toggle_remove_{station}"))
             if len(row) == 3:
                 keyboard.append(row)
                 row = []
@@ -737,8 +730,8 @@ class RoadsurferBot:
         if row:
             keyboard.append(row)
 
-        # Add Done button at the bottom
-        keyboard.append([InlineKeyboardButton("✅ Guardar Cambios", callback_data="save_favorites")])
+        # Put the save button at the top so it stays visible even with many stations
+        keyboard.insert(0, [InlineKeyboardButton("✅ Guardar Cambios", callback_data="save_favorites")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -889,31 +882,50 @@ class RoadsurferBot:
                 
                 await self._show_date_filter_menu(query.message, user_id, edit=True)
 
-    async def send_html_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send the interactive map HTML file"""
+    async def check_new_routes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send the currently available routes matching the user's favorite stations."""
         # Get the appropriate message object based on update type
         message = update.message or update.callback_query.message
-        
-        try:
-            if not self.stations_with_returns:
-                await message.reply_text(
-                    "No hay rutas disponibles. La base de datos se actualiza automáticamente."
-                )
-                return    
-            map_generator = RouteMapGenerator(self.logger)
-            map_generator.generate_map()
-            
-            with open("rutas_interactivas.html", "rb") as f:
-                await message.reply_document(
-                    document=InputFile(f, filename="rutas_interactivas.html"),
-                    caption="📄 Aquí tienes el mapa interactivo con todas las conexiones posibles."
-                )
-        except Exception as e:
-            self.logger.error(f"Error sending HTML file: {e}")
-            await message.reply_text("❌ Error al enviar el archivo.")
-            
-        self.logger.info(f"Sent interactive map to user {update.effective_user.first_name} (ID: {update.effective_user.id})")
-        
+        user_id = str(update.effective_user.id)
+
+        favorite_stations = self.user_favorites.get(user_id, set())
+        if not favorite_stations:
+            await message.reply_text(
+                "No tienes estaciones favoritas. Usa /agregar_favorito para añadir una."
+            )
+            return
+
+        if not self.stations_with_returns:
+            await message.reply_text(
+                "No hay rutas disponibles. La base de datos se actualiza automáticamente."
+            )
+            return
+
+        # Collect routes where the origin or any destination is a favorite station
+        matching_routes = []
+        for station in self.stations_with_returns:
+            origin = station['origin']
+            for ret in station.get('returns', []):
+                if origin in favorite_stations or ret['destination'] in favorite_stations:
+                    matching_routes.append({
+                        'origin': origin,
+                        'returns': [ret]
+                    })
+
+        if not matching_routes:
+            await message.reply_text(
+                "No hay rutas disponibles para tus estaciones favoritas en este momento."
+            )
+            return
+
+        for route in matching_routes:
+            msg, image_path = self.format_station_html(route)
+            await self.send_jpeg_file(update, context, image_path=image_path, msg=msg)
+
+        self.logger.info(
+            f"Sent {len(matching_routes)} favorite routes to user {update.effective_user.first_name} (ID: {user_id})"
+        )
+
     async def send_jpeg_file(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, image_path: str = "", msg: str = "", user_id: str = None) -> bool:
         """Send the JPEG image of the map, either as a reply (when update is present) or directly to a user_id.
         Returns True if the message was delivered, False otherwise."""
@@ -978,30 +990,6 @@ class RoadsurferBot:
                     self.logger.error(f"Error sending fallback message: {e2}")
                 return False
 
-        
-    async def send_json_file(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Send the JSON file with all routes"""
-        # Get the appropriate message object based on update type
-        message = update.message or update.callback_query.message
-        
-        try:
-            if not self.stations_with_returns:
-                await message.reply_text(
-                    "No hay rutas disponibles. La base de datos se actualiza automáticamente."
-                )
-                return
-            
-            with open(self.db_path, "rb") as f:
-                await message.reply_document(
-                    document=InputFile(f, filename="station_routes.json"),
-                    caption="📄 Aquí tienes el archivo JSON con todas las rutas."
-                )
-        except Exception as e:
-            self.logger.error(f"Error sending JSON file: {e}")
-            await message.reply_text("❌ Error al enviar el archivo.")
-            
-        self.logger.info(f"Sent JSON file to user {update.effective_user.first_name} (ID: {update.effective_user.id})")
-
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show detailed help message with all available commands"""
         # Get the appropriate message object based on update type
@@ -1032,8 +1020,6 @@ class RoadsurferBot:
                 await self.show_routes(update, context)
             elif query.data == "show_favorites":
                 await self.show_favorites(update, context)
-            elif query.data in ("descargar_mapa", "send_html_file"):
-                await self.send_html_file(update, context)
             elif query.data in ("help", "help_command"):
                 await self.help_command(update, context)
             elif query.data == "add_favorite":
@@ -1096,7 +1082,8 @@ class RoadsurferBot:
         if row:
             keyboard.append(row)
         
-        keyboard.append([InlineKeyboardButton("✅ Guardar Cambios", callback_data="save_favorites")])
+        # Put the save button at the top so it stays visible even with many stations
+        keyboard.insert(0, [InlineKeyboardButton("✅ Guardar Cambios", callback_data="save_favorites")])
         
         await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -1155,7 +1142,7 @@ class RoadsurferBot:
         for ret in station.get("returns", []):
             lines.append(f"🔁 <b>Destino</b>: <b>{ret['destination']}</b>")
             for d in ret.get("available_dates", []):
-                date_line = f"📅 <code>{d['startDate']} → {d['endDate']}</code>"
+                date_line = f"📅 <code>{d['startDate']} - {d.get('latestPickup', d['endDate'])} → {d['endDate']}</code>"
                 duration = d.get("duration")
                 if duration:
                     date_line += f"  ⏱ {duration}"
